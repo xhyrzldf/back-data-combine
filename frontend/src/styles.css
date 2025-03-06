@@ -777,11 +777,19 @@ label {
 }
 
 /* 数据统计美化 */
+.stats-export-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    position: relative;
+}
+
+/* 数据统计区域样式 */
 .data-stats {
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
-    padding: 0 0 16px 0;
 }
 
 .stats-item {
@@ -894,6 +902,17 @@ label {
 
 /* 底部导出区域 */
 .export-section {
+    /* 移除position: absolute; */
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+/* 可选：调整导出按钮样式使其更突出 */
+#exportExcelBtn {
+    white-space: nowrap;
+}
+/* .export-section {
     position: absolute;
     top: 10px;
     right: 10px;
@@ -903,7 +922,7 @@ label {
     padding: 0;
     display: flex;
     justify-content: flex-end;
-}
+} */
 
 /* 响应式优化 */
 @media (max-width: 768px) {

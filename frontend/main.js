@@ -25,6 +25,15 @@ function createWindow() {
     // 完全移除菜单
     mainWindow.setMenu(null);
 
+    // 在 createWindow 函数中添加
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        // 检测 Ctrl+Shift+I
+        if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+        mainWindow.webContents.toggleDevTools();
+        event.preventDefault();
+        }
+    });
+
     if (process.env.NODE_ENV === 'development') {
         mainWindow.webContents.openDevTools();
     }

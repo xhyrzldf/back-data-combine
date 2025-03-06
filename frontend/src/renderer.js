@@ -1728,7 +1728,8 @@ function addFilterRow() {
         { value: '<>', text: '≠' },
         { value: 'contains', text: '包含' },
         { value: 'startswith', text: '开头是' },
-        { value: 'endswith', text: '结尾是' }
+        { value: 'endswith', text: '结尾是' },
+        { value: 'not_null', text: '不为空' }
     ];
 
     operators.forEach(op => {
