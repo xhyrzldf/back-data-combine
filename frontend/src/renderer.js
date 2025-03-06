@@ -275,7 +275,13 @@ function addEventListeners() {
     elements.backToStep1Btn.addEventListener('click', () => goToStep(1));
     elements.goToStep3Btn.addEventListener('click', () => goToStep(3));
     elements.backToStep2Btn.addEventListener('click', () => goToStep(2));
-    elements.goToStep4Btn.addEventListener('click', () => goToStep(4));
+    elements.goToStep4Btn.addEventListener('click', () => {
+        if (hasMappingConflicts()) {
+            alert('存在字段映射冲突，请确保每个目标字段只被映射一次。');
+            return;
+        }
+        goToStep(4);
+    });
     elements.goToStep5Btn.addEventListener('click', () => goToStep(5));
     elements.finishProcessBtn.addEventListener('click', finishProcessing);
 
@@ -775,6 +781,9 @@ async function startFileAnalysis() {
         }
     }
 
+    // 更新映射警告状态
+    updateMappingWarnings();
+
     elements.goToStep4Btn.disabled = false;
 }
 
@@ -854,6 +863,9 @@ function displayFileMapping(data, fileIndex) {
             }
 
             columnMappings[fileName][column.original_name] = selectedField;
+
+            // 更新冲突警告状态
+            updateMappingWarnings();
         });
 
         // Initialize column mappings
@@ -864,6 +876,25 @@ function displayFileMapping(data, fileIndex) {
 
         mappingEl.appendChild(selectEl);
         if (confidenceEl) mappingEl.appendChild(confidenceEl);
+
+        // 添加警告图标容器（初始隐藏）
+        const warningEl = document.createElement('span');
+        warningEl.className = 'mapping-warning';
+        warningEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 9V14M12 17.5V18M12 3L4 5V11.5C4 15.6459 7.11566 20.0848 12 22C16.8843 20.0848 20 15.6459 20 11.5V5L12 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        warningEl.style.display = 'none'; // 默认隐藏
+
+        // 添加提示文本容器
+        const tooltipEl = document.createElement('span');
+        tooltipEl.className = 'warning-tooltip';
+        warningEl.appendChild(tooltipEl);
+
+        mappingEl.appendChild(warningEl);
+
+        // 保存字段名和警告元素的引用，便于后续更新
+        selectEl.dataset.fileName = fileName;
+        selectEl.dataset.columnName = column.original_name;
+        selectEl.warningEl = warningEl;
+        selectEl.tooltipEl = tooltipEl;
 
         // Add sample values
         const samplesEl = document.createElement('div');
@@ -892,6 +923,53 @@ function displayFileMapping(data, fileIndex) {
 
     fileEl.appendChild(columnsEl);
     elements.mappingResults.appendChild(fileEl);
+
+    // 在所有文件加载完成后更新
+    if (fileIndex === selectedFiles.length - 1) {
+        // 延迟一下确保DOM更新完成
+        setTimeout(() => {
+            updateMappingWarnings();
+        }, 100);
+    }
+}
+
+// 更新所有映射冲突警告
+function updateMappingWarnings() {
+    const conflicts = detectMappingConflicts();
+    
+    // 获取所有映射选择元素
+    const mappingSelects = document.querySelectorAll('.mapping-select');
+    
+    // 首先隐藏所有警告
+    mappingSelects.forEach(select => {
+        if (select.warningEl) {
+            select.warningEl.style.display = 'none';
+        }
+    });
+    
+    // 显示有冲突的警告
+    mappingSelects.forEach(select => {
+        const fileName = select.dataset.fileName;
+        const columnName = select.dataset.columnName;
+        const targetField = select.value;
+        
+        if (!fileName || !columnName || !targetField) return;
+        
+        if (conflicts[fileName] && conflicts[fileName][targetField]) {
+            const conflictingColumns = conflicts[fileName][targetField];
+            
+            // 如果当前列在冲突列表中，则显示警告
+            if (conflictingColumns.includes(columnName)) {
+                if (select.warningEl) {
+                    select.warningEl.style.display = 'inline-flex';
+                    select.tooltipEl.textContent = `字段 "${targetField}" 已被多个列映射: ${conflictingColumns.join(', ')}`;
+                }
+            }
+        }
+    });
+    
+    // 更新"开始处理"按钮状态
+    elements.goToStep4Btn.disabled = hasMappingConflicts();
 }
 
 // Get confidence class based on similarity score
@@ -901,7 +979,47 @@ function getConfidenceClass(similarity) {
     return 'confidence-low';
 }
 
-// Start processing files
+// 增加超时和重试机制的API请求函数
+async function fetchWithRetry(url, options, maxRetries = 3, timeout = 60000) {
+    let lastError;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            // 添加请求超时控制
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            
+            options.signal = controller.signal;
+            
+            const response = await fetch(url, options);
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error ${response.status}`);
+            }
+            
+            return await response.json();
+        } catch (error) {
+            lastError = error;
+            
+            if (error.name === 'AbortError') {
+                console.error(`请求超时 (尝试 ${attempt + 1}/${maxRetries})`);
+            } else {
+                console.error(`请求失败: ${error.message} (尝试 ${attempt + 1}/${maxRetries})`);
+            }
+            
+            if (attempt < maxRetries - 1) {
+                // 指数退避重试
+                const delay = 1000 * Math.pow(2, attempt);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    
+    throw lastError;
+}
+
+// 修改 startProcessing 函数
 async function startProcessing() {
     elements.processingProgress.style.display = 'block';
     elements.processingStats.innerHTML = '';
@@ -939,17 +1057,21 @@ async function startProcessing() {
         progressFill.style.width = '0%';
         progressText.textContent = '正在处理数据...';
 
-        const response = await fetch(`${API_BASE_URL}/process-files`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                file_paths: selectedFiles,
-                db_path: dbFile,
-                column_mappings: mappings
-            })
-        });
-
-        const data = await response.json();
+        // 使用带重试的请求
+        const data = await fetchWithRetry(
+            `${API_BASE_URL}/process-files`, 
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_paths: selectedFiles,
+                    db_path: dbFile,
+                    column_mappings: mappings
+                })
+            },
+            3,  // 最大重试次数
+            180000  // 超时时间增加到3分钟
+        );
 
         if (data.status === 'success') {
             // Update progress to 100%
@@ -967,10 +1089,43 @@ async function startProcessing() {
         } else {
             progressText.textContent = `处理失败: ${data.message}`;
             console.error('Failed to process files:', data.message);
+            
+            // 显示错误信息
+            const errorEl = document.createElement('div');
+            errorEl.className = 'error-message';
+            errorEl.textContent = `处理失败: ${data.message}`;
+            if (data.details) {
+                const detailsEl = document.createElement('pre');
+                detailsEl.textContent = data.details;
+                detailsEl.style.maxHeight = '200px';
+                detailsEl.style.overflow = 'auto';
+                errorEl.appendChild(detailsEl);
+            }
+            elements.processingStats.appendChild(errorEl);
         }
     } catch (error) {
         progressText.textContent = '处理失败!';
         console.error('Failed to process files:', error);
+        
+        // 显示错误信息，包含"Broken pipe"提示
+        const errorEl = document.createElement('div');
+        errorEl.className = 'error-message';
+        errorEl.innerHTML = `
+            <p>处理失败: ${error.message}</p>
+            <p>可能原因:</p>
+            <ul>
+                <li>文件太大或格式不兼容</li>
+                <li>后端处理服务连接中断</li>
+                <li>处理超时</li>
+            </ul>
+            <p>建议:</p>
+            <ul>
+                <li>尝试处理更小的文件或拆分大文件</li>
+                <li>重启应用后再试</li>
+                <li>检查Excel文件格式是否正确</li>
+            </ul>
+        `;
+        elements.processingStats.appendChild(errorEl);
     }
 }
 
@@ -1612,6 +1767,49 @@ async function exportToExcel() {
         console.error('Failed to export to Excel:', error);
         alert('导出失败。请重试。');
     }
+}
+
+// 检测映射冲突并返回冲突信息
+function detectMappingConflicts() {
+    const conflicts = {};
+    
+    // 遍历所有文件的映射
+    for (const fileName in columnMappings) {
+        const fileMapping = columnMappings[fileName];
+        
+        // 创建一个反向映射来检测冲突
+        const reverseMapping = {};
+        
+        for (const originalCol in fileMapping) {
+            const targetCol = fileMapping[originalCol];
+            
+            // 跳过未映射的列
+            if (!targetCol) continue;
+            
+            // 如果目标列已经被其他列映射，则记录冲突
+            if (reverseMapping[targetCol]) {
+                if (!conflicts[fileName]) {
+                    conflicts[fileName] = {};
+                }
+                
+                if (!conflicts[fileName][targetCol]) {
+                    conflicts[fileName][targetCol] = [reverseMapping[targetCol]];
+                }
+                
+                conflicts[fileName][targetCol].push(originalCol);
+            } else {
+                reverseMapping[targetCol] = originalCol;
+            }
+        }
+    }
+    
+    return conflicts;
+}
+
+// 检查是否存在映射冲突
+function hasMappingConflicts() {
+    const conflicts = detectMappingConflicts();
+    return Object.keys(conflicts).length > 0;
 }
 
 // Open settings modal

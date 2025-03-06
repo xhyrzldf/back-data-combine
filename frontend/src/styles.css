@@ -550,6 +550,38 @@ label {
     font-size: 12px;
 }
 
+/* 警告图标 */
+.mapping-warning {
+    color: var(--warning-color);
+    margin-left: 8px;
+    cursor: help;
+    position: relative;
+}
+
+.warning-tooltip {
+    visibility: hidden;
+    width: 200px;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 8px;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -100px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    font-size: 12px;
+    font-weight: normal;
+}
+
+.mapping-warning:hover .warning-tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
 .confidence-high {
     background-color: rgba(52, 199, 89, 0.1);
     color: var(--success-color);
