@@ -212,11 +212,6 @@ label {
 }
 
 /* Layout */
-.app-container {
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 24px;
-}
 
 .app-header {
     display: flex;
@@ -230,17 +225,16 @@ label {
     gap: 12px;
 }
 
-.app-content {
-    position: relative;
-}
-
 /* Screens */
 .screen {
     display: none;
+    height: 100%; /* 填充app-content容器 */
+    flex-grow: 1;
 }
 
 .screen.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
 }
 
 .screen-header {
@@ -292,6 +286,9 @@ label {
     border-radius: 16px;
     padding: 24px;
     box-shadow: var(--card-shadow);
+    flex-grow: 1; /* 填充可用空间 */
+    overflow-y: auto; /* 需要时添加滚动 */
+    max-height: 400px; /* 设置合理的最大高度 */
 }
 
 .recent-files h3 {
@@ -329,6 +326,9 @@ label {
     border-radius: 16px;
     box-shadow: var(--card-shadow);
     overflow: hidden;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 .steps {
@@ -384,14 +384,18 @@ label {
 
 .step-content {
     padding: 32px;
+    overflow-y: auto; /* 使其可滚动 */
+    flex-grow: 1; /* 填充可用空间 */
 }
 
 .step-panel {
     display: none;
+    height: 100%;
+    flex-direction: column;
 }
 
 .step-panel.active {
-    display: block;
+    display: flex;
 }
 
 .step-actions {
@@ -411,11 +415,14 @@ label {
 
 .selected-files-list {
     margin-top: 24px;
+    height: auto;
     max-height: 300px;
+    min-height: 100px;
     overflow-y: auto;
     border: 1px solid var(--border-color);
     border-radius: 12px;
     background-color: #fff;
+    flex-grow: 1;
 }
 
 .selected-file-item {
@@ -661,11 +668,14 @@ label {
 }
 
 .verification-table-container {
-    height: 400px;
+    height: auto;
+    max-height: calc(100vh - 400px);
+    min-height: 200px;
     overflow-y: auto;
     border: 1px solid var(--border-color);
     border-radius: 12px;
     background-color: #fff;
+    flex-grow: 1;
 }
 
 .verification-table {
@@ -733,8 +743,9 @@ label {
     border-radius: 16px;
     box-shadow: var(--card-shadow);
     padding: 28px;
-    height: calc(100vh - 150px); /* 限制高度以适应屏幕 */
-    overflow: hidden; /* 防止整体出现滚动条 */
+    overflow: hidden; /* 默认隐藏溢出 */
+    flex-grow: 1; /* 填充可用空间 */
+    min-height: 500px; /* 内容的最小高度 */
 }
 
 /* 筛选区域 */
@@ -788,10 +799,19 @@ label {
 }
 
 /* 表格容器 - 关键部分 */
+/* 表格和导出按钮容器 */
+.table-with-export {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
 .data-table-container {
     flex: 1;
-    min-height: 300px;
-    overflow: auto; /* 只在表格区域显示滚动条 */
+    min-height: 200px; /* 最小高度以显示一些行 */
+    max-height: calc(100vh - 400px); /* 基于视口的最大高度 */
+    overflow: auto; /* 需要时添加滚动 */
     border: 1px solid var(--border-color);
     border-radius: 12px;
     background-color: #fff;
@@ -874,10 +894,15 @@ label {
 
 /* 底部导出区域 */
 .export-section {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 5;
+    background-color: transparent;
+    border: none;
+    padding: 0;
     display: flex;
     justify-content: flex-end;
-    padding-top: 16px;
-    border-top: 1px solid var(--border-color);
 }
 
 /* 响应式优化 */
@@ -1206,6 +1231,14 @@ label {
     .steps {
         flex-wrap: wrap;
     }
+
+    .data-table-container {
+        max-height: calc(100vh - 350px);
+    }
+    
+    .verification-table-container {
+        max-height: calc(100vh - 350px);
+    }
 }
 
 /* 添加一个可拖动区域样式 */
@@ -1290,6 +1323,9 @@ label {
     padding: 0 24px 24px 24px;
     border-radius: 12px;
     overflow: hidden; /* 避免圆角溢出 */
+    min-height: 100vh; /* 设置最小高度填满视口 */
+    display: flex;
+    flex-direction: column; /* 使容器成为纵向flex容器 */
 }
 
 /* 调整内容区域样式 */
@@ -1299,6 +1335,9 @@ label {
     border-radius: 0 0 12px 12px;
     padding: 24px;
     box-shadow: var(--card-shadow);
+    flex-grow: 1; /* 填充可用空间 */
+    display: flex; /* 使其成为flex容器 */
+    flex-direction: column; /* 子元素纵向堆叠 */
 }
 
 /* 对于无边框窗口，增加一个轻微的阴影效果 */

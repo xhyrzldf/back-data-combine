@@ -325,6 +325,23 @@ function addEventListeners() {
     elements.applyFiltersBtn.addEventListener('click', applyFilters);
     elements.exportExcelBtn.addEventListener('click', exportToExcel);
 
+    // 监听筛选操作符变化
+    elements.filterContainer.addEventListener('change', event => {
+        if (event.target.classList.contains('filter-operator')) {
+            const row = event.target.closest('.filter-row');
+            const valueInput = row.querySelector('.filter-value');
+            
+            if (event.target.value === 'not_null') {
+                valueInput.disabled = true;
+                valueInput.placeholder = '不需要输入';
+                valueInput.value = '';
+            } else {
+                valueInput.disabled = false;
+                valueInput.placeholder = '值';
+            }
+        }
+    });
+
     // Settings
     elements.settingsBtn.addEventListener('click', openSettings);
     elements.showRecentFiles.addEventListener('change', (e) => {
@@ -1752,7 +1769,8 @@ function getFilters() {
         const operator = row.querySelector('.filter-operator').value;
         const value = row.querySelector('.filter-value').value.trim();
 
-        if (value) {
+        // 对于"不为空"操作符，不需要检查value是否有值
+        if (operator === 'not_null' || value) {
             filters.push({
                 column: column,
                 operator: operator,

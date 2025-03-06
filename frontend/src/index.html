@@ -246,6 +246,7 @@
                                     <option value="contains">包含</option>
                                     <option value="startswith">开头是</option>
                                     <option value="endswith">结尾是</option>
+                                    <option value="not_null">不为空</option>
                                 </select>
                                 <input type="text" class="filter-value" placeholder="值">
                                 <button class="btn small remove-filter">删除</button>
@@ -257,8 +258,13 @@
                         </div>
                     </div>
 
-                    <!-- 数据统计信息 -->
-                    <div class="data-stats" id="dataStats"></div>
+                    <!-- 数据统计区域包含导出按钮 -->
+                    <div class="stats-export-row">
+                        <div class="data-stats" id="dataStats"></div>
+                        <div class="export-section">
+                            <button id="exportExcelBtn" class="btn primary">导出到Excel</button>
+                        </div>
+                    </div>
 
                     <!-- 中间放置表格 -->
                     <div class="data-table-container">
@@ -267,14 +273,9 @@
                             <tbody id="dataTableBody"></tbody>
                         </table>
                     </div>
-                    
+
                     <!-- 分页 -->
                     <div class="pagination" id="dataPagination"></div>
-
-                    <!-- 底部放置导出功能 -->
-                    <div class="export-section">
-                        <button id="exportExcelBtn" class="btn primary">导出到Excel</button>
-                    </div>
                 </div>
             </div>
 

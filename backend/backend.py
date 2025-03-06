@@ -676,8 +676,10 @@ def query_database():
                 operator = f.get('operator', '=')
                 value = f.get('value')
 
-                if column and value is not None:
-                    if operator == 'contains':
+                if column:
+                    if operator == 'not_null':
+                        filter_conditions.append(f"{column} IS NOT NULL AND {column} != ''")
+                    elif operator == 'contains':
                         filter_conditions.append(f"{column} LIKE ?")
                         params.append(f"%{value}%")
                     elif operator == 'startswith':
