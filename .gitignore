@@ -1,0 +1,60 @@
+# ======================================================
+# 前端 Electron / Node.js 部分
+# ======================================================
+
+# 忽略 Node.js 的依赖库目录
+node_modules/
+
+# 忽略日志文件
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 忽略 Electron 打包输出目录（根据实际情况调整）
+dist/
+build/
+
+# 忽略 Electron 打包生成的 asar 文件
+*.asar
+
+# 忽略常见操作系统生成的文件
+.DS_Store
+Thumbs.db
+
+# ======================================================
+# 后端 Python 部分
+# ======================================================
+
+# 忽略 Python 编译生成的字节码文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略 Python 虚拟环境目录（请根据实际使用的目录名称调整）
+env/
+venv/
+ENV/
+.venv/
+
+# 忽略 Python 构建和打包过程中生成的文件和目录
+build/
+dist/
+*.egg-info/
+
+# 如果使用 Jupyter Notebook，也可以忽略检查点目录
+.ipynb_checkpoints/
+
+# 可选：忽略测试覆盖率报告文件
+htmlcov/
+.coverage
+.coverage.*
+
+# 可选：忽略其他缓存文件
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+

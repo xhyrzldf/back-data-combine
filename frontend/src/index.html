@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>银行流水合并工具</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>银行流水合并工具</h1>
+            <div class="header-actions">
+                <button id="settingsBtn" class="btn icon-btn">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M10 13C11.6569 13 13 11.6569 13 10C13 8.34315 11.6569 7 10 7C8.34315 7 7 8.34315 7 10C7 11.6569 8.34315 13 10 13Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M16.1333 12.6667C16.0467 12.8934 16.0467 13.1467 16.1333 13.3734L17.2 15.5C17.3333 15.8 17.1333 16.1667 16.8 16.2334L14.8 16.7334C14.58 16.7867 14.3933 16.9334 14.2867 17.1334L13.2867 18.9C13.1333 19.1667 12.7667 19.2667 12.5 19.1L10.7333 18.1667C10.52 18.0667 10.2667 18.0667 10.0533 18.1667L8.28667 19.1C8.02 19.2667 7.65333 19.1667 7.5 18.9L6.5 17.1334C6.39333 16.9334 6.20667 16.7867 5.98667 16.7334L3.98667 16.2334C3.65333 16.1667 3.45333 15.8 3.58667 15.5L4.65333 13.3734C4.74 13.1467 4.74 12.8934 4.65333 12.6667L3.58667 10.5C3.45333 10.2 3.65333 9.83336 3.98667 9.76669L5.98667 9.26669C6.20667 9.21336 6.39333 9.06669 6.5 8.86669L7.5 7.10003C7.65333 6.83336 8.02 6.73336 8.28667 6.90003L10.0533 7.83336C10.2667 7.93336 10.52 7.93336 10.7333 7.83336L12.5 6.90003C12.7667 6.73336 13.1333 6.83336 13.2867 7.10003L14.2867 8.86669C14.3933 9.06669 14.58 9.21336 14.8 9.26669L16.8 9.76669C17.1333 9.83336 17.3333 10.2 17.2 10.5L16.1333 12.6667Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <main class="app-content">
+            <!-- Home screen -->
+            <div id="homeScreen" class="screen active">
+                <div class="home-options">
+                    <div class="option-card" id="newDatabaseBtn">
+                        <div class="option-icon">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3Z" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M8.5 10H15.5" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M8.5 14H15.5" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M8.5 18H12" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <h2>新建流水线索数据库表格</h2>
+                        <p>导入多个Excel表格，合并为统一格式的数据库</p>
+                    </div>
+                    <div class="option-card" id="openDatabaseBtn">
+                        <div class="option-icon">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M15 15L20 20M10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10C17 13.866 13.866 17 10 17Z" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <h2>简易处理已有流水线索数据库表格</h2>
+                        <p>查询、筛选、排序已有的数据库表格</p>
+                    </div>
+                </div>
+
+                <div class="recent-files">
+                    <h3>最近文件</h3>
+                    <ul id="recentFilesList"></ul>
+                </div>
+            </div>
+
+            <!-- New Database Screen -->
+            <div id="newDatabaseScreen" class="screen">
+                <div class="screen-header">
+                    <h2>新建流水线索数据库表格</h2>
+                    <button class="btn secondary" id="backToHomeBtn">返回主页</button>
+                </div>
+
+                <div class="step-container">
+                    <div class="steps">
+                        <div class="step active" data-step="1">
+                            <div class="step-number">1</div>
+                            <div class="step-text">选择文件</div>
+                        </div>
+                        <div class="step" data-step="2">
+                            <div class="step-number">2</div>
+                            <div class="step-text">设置模板</div>
+                        </div>
+                        <div class="step" data-step="3">
+                            <div class="step-number">3</div>
+                            <div class="step-text">字段映射</div>
+                        </div>
+                        <div class="step" data-step="4">
+                            <div class="step-number">4</div>
+                            <div class="step-text">数据处理</div>
+                        </div>
+                        <div class="step" data-step="5">
+                            <div class="step-number">5</div>
+                            <div class="step-text">人工校对</div>
+                        </div>
+                    </div>
+
+                    <div class="step-content">
+                        <!-- Step 1: Select Files -->
+                        <div class="step-panel active" data-step="1">
+                            <h3>选择要导入的Excel文件</h3>
+                            <p class="help-text">支持xls、xlsx格式，单次导入不能超过20,000张表格，单张表格不能超过20,000行</p>
+
+                            <div class="file-upload-container">
+                                <button id="selectFilesBtn" class="btn">选择文件</button>
+                                <span id="selectedFilesCount">未选择文件</span>
+                            </div>
+
+                            <div id="selectedFilesList" class="selected-files-list"></div>
+
+                            <div class="step-actions">
+                                <button id="goToStep2Btn" class="btn primary" disabled>下一步</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Template Settings -->
+                        <div class="step-panel" data-step="2">
+                            <h3>设置合并模板</h3>
+                            <p class="help-text">选择或创建一个模板，用于标准化不同表格的字段</p>
+
+                            <div class="template-selection">
+                                <label for="templateSelect">选择模板：</label>
+                                <select id="templateSelect"></select>
+                                <button id="newTemplateBtn" class="btn secondary">新建模板</button>
+                            </div>
+
+                            <div class="template-preview">
+                                <h4>模板预览</h4>
+                                <div class="template-columns" id="templateColumns"></div>
+                            </div>
+
+                            <div class="step-actions">
+                                <button id="backToStep1Btn" class="btn secondary">上一步</button>
+                                <button id="goToStep3Btn" class="btn primary">下一步</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Field Mapping -->
+                        <div class="step-panel" data-step="3">
+                            <h3>字段映射</h3>
+                            <p class="help-text">系统将自动分析表格并匹配字段，您可以手动调整不确定的映射</p>
+
+                            <div class="analysis-progress" id="analysisProgress">
+                                <div class="progress-bar">
+                                    <div class="progress-fill"></div>
+                                </div>
+                                <div class="progress-text">正在分析文件...</div>
+                            </div>
+
+                            <div class="mapping-results" id="mappingResults"></div>
+
+                            <div class="step-actions">
+                                <button id="backToStep2Btn" class="btn secondary">上一步</button>
+                                <button id="goToStep4Btn" class="btn primary" disabled>开始处理</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 4: Processing -->
+                        <div class="step-panel" data-step="4">
+                            <h3>数据处理</h3>
+                            <p class="help-text">系统正在合并所有表格，请稍候...</p>
+
+                            <div class="processing-progress" id="processingProgress">
+                                <div class="progress-bar">
+                                    <div class="progress-fill"></div>
+                                </div>
+                                <div class="progress-text">正在处理...</div>
+                            </div>
+
+                            <div class="processing-stats" id="processingStats"></div>
+
+                            <div class="step-actions">
+                                <button id="goToStep5Btn" class="btn primary" disabled>人工校对</button>
+                            </div>
+                        </div>
+
+                        <!-- Step 5: Manual Verification -->
+                        <div class="step-panel" data-step="5">
+                            <h3>人工校对</h3>
+                            <p class="help-text">以下是需要人工校对的数据行，您可以修改或删除这些数据</p>
+
+                            <div class="verification-container">
+                                <div class="verification-stats" id="verificationStats"></div>
+                                <div class="verification-table-container">
+                                    <table class="verification-table" id="verificationTable">
+                                        <thead>
+                                            <tr>
+                                                <th>来源文件</th>
+                                                <th>行号</th>
+                                                <th>原始数据</th>
+                                                <th>操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="verificationTableBody"></tbody>
+                                    </table>
+                                </div>
+                                <div class="pagination" id="verificationPagination"></div>
+                            </div>
+
+                            <div class="step-actions">
+                                <button id="finishProcessBtn" class="btn primary">完成处理</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Database Viewer Screen -->
+            <div id="databaseViewerScreen" class="screen">
+                <div class="screen-header">
+                    <h2>数据库查看器</h2>
+                    <div class="header-actions">
+                        <span id="currentDatabaseName"></span>
+                        <button class="btn secondary" id="backToHomeFromViewerBtn">返回主页</button>
+                    </div>
+                </div>
+
+                <div class="viewer-container">
+                    <div class="sidebar">
+                        <div class="filter-section">
+                            <h3>筛选条件</h3>
+                            <div id="filterContainer">
+                                <div class="filter-row">
+                                    <select class="filter-column"></select>
+                                    <select class="filter-operator">
+                                        <option value="=">=</option>
+                                        <option value="<">＜</option>
+                                        <option value=">">＞</option>
+                                        <option value="<=">≤</option>
+                                        <option value=">=">≥</option>
+                                        <option value="<>">≠</option>
+                                        <option value="contains">包含</option>
+                                        <option value="startswith">开头是</option>
+                                        <option value="endswith">结尾是</option>
+                                    </select>
+                                    <input type="text" class="filter-value" placeholder="值">
+                                    <button class="btn small remove-filter">删除</button>
+                                </div>
+                            </div>
+                            <button id="addFilterBtn" class="btn small">添加筛选条件</button>
+                            <button id="applyFiltersBtn" class="btn">应用筛选</button>
+                        </div>
+
+                        <div class="sort-section">
+                            <h3>排序</h3>
+                            <div class="sort-controls">
+                                <select id="sortColumn"></select>
+                                <select id="sortDirection">
+                                    <option value="asc">升序</option>
+                                    <option value="desc">降序</option>
+                                </select>
+                                <button id="applySortBtn" class="btn">应用排序</button>
+                            </div>
+                        </div>
+
+                        <div class="export-section">
+                            <h3>导出</h3>
+                            <button id="exportExcelBtn" class="btn">导出到Excel</button>
+                        </div>
+                    </div>
+
+                    <div class="main-content">
+                        <div class="data-stats" id="dataStats"></div>
+                        <div class="data-table-container">
+                            <table class="data-table" id="dataTable">
+                                <thead id="dataTableHead"></thead>
+                                <tbody id="dataTableBody"></tbody>
+                            </table>
+                        </div>
+                        <div class="pagination" id="dataPagination"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Template Editor Modal -->
+            <div id="templateEditorModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>模板编辑器</h3>
+                        <button class="close-modal">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="template-name-container">
+                            <label for="templateNameInput">模板名称：</label>
+                            <input type="text" id="templateNameInput" placeholder="请输入模板名称">
+                            <label class="checkbox-container">
+                                <input type="checkbox" id="isDefaultTemplate">
+                                <span class="checkmark"></span>
+                                设为默认模板
+                            </label>
+                        </div>
+
+                        <div class="template-fields-container">
+                            <h4>模板字段</h4>
+                            <div class="template-fields" id="templateFieldsList"></div>
+                            <button id="addFieldBtn" class="btn small">添加字段</button>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button id="cancelTemplateBtn" class="btn secondary">取消</button>
+                        <button id="saveTemplateBtn" class="btn primary">保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Synonyms Editor Modal -->
+            <div id="synonymsEditorModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>近义词编辑器</h3>
+                        <button class="close-modal">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-body">
+                        <h4 id="synonymsFieldName"></h4>
+                        <p class="help-text">添加该字段的近义词，帮助系统更准确地识别不同表格中的相同字段</p>
+
+                        <div class="synonyms-list-container">
+                            <div id="synonymsList" class="synonyms-list"></div>
+                            <div class="synonyms-add">
+                                <input type="text" id="newSynonymInput" placeholder="添加新近义词">
+                                <button id="addSynonymBtn" class="btn small">添加</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button id="cancelSynonymsBtn" class="btn secondary">取消</button>
+                        <button id="saveSynonymsBtn" class="btn primary">保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row Editor Modal -->
+            <div id="rowEditorModal" class="modal">
+                <div class="modal-content large-modal">
+                    <div class="modal-header">
+                        <h3>编辑数据行</h3>
+                        <button class="close-modal">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="row-info">
+                            <p>来源文件: <span id="rowSourceFile"></span></p>
+                            <p>行号: <span id="rowNumber"></span></p>
+                        </div>
+
+                        <div class="row-editor-fields" id="rowEditorFields"></div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button id="deleteRowBtn" class="btn danger">删除此行</button>
+                        <button id="cancelRowEditBtn" class="btn secondary">取消</button>
+                        <button id="saveRowBtn" class="btn primary">保存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Modal -->
+            <div id="settingsModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>设置</h3>
+                        <button class="close-modal">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="settings-section">
+                            <h4>常规设置</h4>
+                            <div class="setting-item">
+                                <label class="checkbox-container">
+                                    <input type="checkbox" id="showRecentFiles" checked>
+                                    <span class="checkmark"></span>
+                                    显示最近文件
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>模板管理</h4>
+                            <div class="template-list" id="settingsTemplatesList"></div>
+                            <button id="manageTemplatesBtn" class="btn small">管理模板</button>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button id="saveSettingsBtn" class="btn primary">保存设置</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Overlay -->
+            <div id="overlay" class="overlay"></div>
+        </main>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

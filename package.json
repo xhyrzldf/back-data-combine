@@ -1,0 +1,53 @@
+{
+  "name": "bank-statement-merger",
+  "version": "1.0.0",
+  "description": "银行流水合并工具",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "electron-is-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.3"
+  },
+  "build": {
+    "appId": "com.bankstatement.merger",
+    "productName": "Bank Statement Merger",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!backend/venv/**/*",
+      "!**/*.py[cod]",
+      "!**/__pycache__/**",
+      "!**/node_modules/**",
+      "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": ["**/*", "!venv/**/*", "!**/*.py[cod]", "!**/__pycache__/**"]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    }
+  }
+}
