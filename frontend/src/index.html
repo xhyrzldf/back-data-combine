@@ -8,8 +8,11 @@
 </head>
 <body>
     <div class="app-container">
+        <!-- 在 app-header 中添加窗口控制按钮 -->
         <header class="app-header">
-            <h1>银行流水合并工具</h1>
+            <div class="window-drag-area">
+                <h1>银行流水合并工具</h1>
+            </div>
             <div class="header-actions">
                 <button id="settingsBtn" class="btn icon-btn">
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -17,6 +20,19 @@
                         <path d="M16.1333 12.6667C16.0467 12.8934 16.0467 13.1467 16.1333 13.3734L17.2 15.5C17.3333 15.8 17.1333 16.1667 16.8 16.2334L14.8 16.7334C14.58 16.7867 14.3933 16.9334 14.2867 17.1334L13.2867 18.9C13.1333 19.1667 12.7667 19.2667 12.5 19.1L10.7333 18.1667C10.52 18.0667 10.2667 18.0667 10.0533 18.1667L8.28667 19.1C8.02 19.2667 7.65333 19.1667 7.5 18.9L6.5 17.1334C6.39333 16.9334 6.20667 16.7867 5.98667 16.7334L3.98667 16.2334C3.65333 16.1667 3.45333 15.8 3.58667 15.5L4.65333 13.3734C4.74 13.1467 4.74 12.8934 4.65333 12.6667L3.58667 10.5C3.45333 10.2 3.65333 9.83336 3.98667 9.76669L5.98667 9.26669C6.20667 9.21336 6.39333 9.06669 6.5 8.86669L7.5 7.10003C7.65333 6.83336 8.02 6.73336 8.28667 6.90003L10.0533 7.83336C10.2667 7.93336 10.52 7.93336 10.7333 7.83336L12.5 6.90003C12.7667 6.73336 13.1333 6.83336 13.2867 7.10003L14.2867 8.86669C14.3933 9.06669 14.58 9.21336 14.8 9.26669L16.8 9.76669C17.1333 9.83336 17.3333 10.2 17.2 10.5L16.1333 12.6667Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                 </button>
+                <!-- 添加自定义窗口控制按钮 -->
+                <div class="window-controls">
+                    <button id="minimizeBtn" class="window-control minimize-btn" title="最小化">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M2 8H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                    <button id="closeBtn" class="window-control close-btn" title="关闭">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 3L13 13M3 13L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -194,7 +210,16 @@
                 </div>
             </div>
 
-            <!-- Database Viewer Screen -->
+            <div style="display: none;">
+                <!-- 隐藏的排序控件，用于存储排序状态 -->
+                <select id="sortColumn"></select>
+                <select id="sortDirection">
+                    <option value="asc">升序</option>
+                    <option value="desc">降序</option>
+                </select>
+            </div>
+
+            <!-- 优化后的数据库查看器部分 -->
             <div id="databaseViewerScreen" class="screen">
                 <div class="screen-header">
                     <h2>数据库查看器</h2>
@@ -205,58 +230,50 @@
                 </div>
 
                 <div class="viewer-container">
-                    <div class="sidebar">
-                        <div class="filter-section">
-                            <h3>筛选条件</h3>
-                            <div id="filterContainer">
-                                <div class="filter-row">
-                                    <select class="filter-column"></select>
-                                    <select class="filter-operator">
-                                        <option value="=">=</option>
-                                        <option value="<">＜</option>
-                                        <option value=">">＞</option>
-                                        <option value="<=">≤</option>
-                                        <option value=">=">≥</option>
-                                        <option value="<>">≠</option>
-                                        <option value="contains">包含</option>
-                                        <option value="startswith">开头是</option>
-                                        <option value="endswith">结尾是</option>
-                                    </select>
-                                    <input type="text" class="filter-value" placeholder="值">
-                                    <button class="btn small remove-filter">删除</button>
-                                </div>
-                            </div>
-                            <button id="addFilterBtn" class="btn small">添加筛选条件</button>
-                            <button id="applyFiltersBtn" class="btn">应用筛选</button>
-                        </div>
-
-                        <div class="sort-section">
-                            <h3>排序</h3>
-                            <div class="sort-controls">
-                                <select id="sortColumn"></select>
-                                <select id="sortDirection">
-                                    <option value="asc">升序</option>
-                                    <option value="desc">降序</option>
+                    <!-- 上方只放置筛选部分 -->
+                    <div class="filter-section">
+                        <h3>筛选条件</h3>
+                        <div id="filterContainer">
+                            <div class="filter-row">
+                                <select class="filter-column"></select>
+                                <select class="filter-operator">
+                                    <option value="=">=</option>
+                                    <option value="<">＜</option>
+                                    <option value=">">＞</option>
+                                    <option value="<=">≤</option>
+                                    <option value=">=">≥</option>
+                                    <option value="<>">≠</option>
+                                    <option value="contains">包含</option>
+                                    <option value="startswith">开头是</option>
+                                    <option value="endswith">结尾是</option>
                                 </select>
-                                <button id="applySortBtn" class="btn">应用排序</button>
+                                <input type="text" class="filter-value" placeholder="值">
+                                <button class="btn small remove-filter">删除</button>
                             </div>
                         </div>
-
-                        <div class="export-section">
-                            <h3>导出</h3>
-                            <button id="exportExcelBtn" class="btn">导出到Excel</button>
+                        <div class="filter-actions">
+                            <button id="addFilterBtn" class="btn small">添加筛选条件</button>
+                            <button id="applyFiltersBtn" class="btn primary">应用筛选</button>
                         </div>
                     </div>
 
-                    <div class="main-content">
-                        <div class="data-stats" id="dataStats"></div>
-                        <div class="data-table-container">
-                            <table class="data-table" id="dataTable">
-                                <thead id="dataTableHead"></thead>
-                                <tbody id="dataTableBody"></tbody>
-                            </table>
-                        </div>
-                        <div class="pagination" id="dataPagination"></div>
+                    <!-- 数据统计信息 -->
+                    <div class="data-stats" id="dataStats"></div>
+
+                    <!-- 中间放置表格 -->
+                    <div class="data-table-container">
+                        <table class="data-table" id="dataTable">
+                            <thead id="dataTableHead"></thead>
+                            <tbody id="dataTableBody"></tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- 分页 -->
+                    <div class="pagination" id="dataPagination"></div>
+
+                    <!-- 底部放置导出功能 -->
+                    <div class="export-section">
+                        <button id="exportExcelBtn" class="btn primary">导出到Excel</button>
                     </div>
                 </div>
             </div>

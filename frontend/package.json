@@ -1,0 +1,12 @@
+{
+    "name": "bank-statement-merger-frontend",
+    "version": "1.0.0",
+    "description": "银行流水合并工具前端",
+    "main": "main.js",
+    "scripts": {
+      "start": "electron ."
+    },
+    "devDependencies": {
+      "electron": "^27.0.0"
+    }
+  }

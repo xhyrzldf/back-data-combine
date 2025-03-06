@@ -19,7 +19,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 添加处理后端崩溃的监听器
     onBackendCrash: (callback) => {
         ipcRenderer.on('backend-crash', (event, data) => callback(data));
-    }
+    },
+    
+    // 添加窗口控制 API
+    minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+    closeWindow: () => ipcRenderer.invoke('window-close')
 });
 
 // 添加调试信息，确认preload脚本已加载

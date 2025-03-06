@@ -722,75 +722,87 @@ label {
     border-color: var(--primary-color);
 }
 
-/* Database Viewer */
+/* 优化后的数据库查看器样式 */
+
+/* 整体容器改为纵向布局，增加内边距和间距 */
 .viewer-container {
     display: flex;
+    flex-direction: column;
     gap: 24px;
     background-color: white;
     border-radius: 16px;
     box-shadow: var(--card-shadow);
-    padding: 24px;
+    padding: 28px;
+    height: calc(100vh - 150px); /* 限制高度以适应屏幕 */
+    overflow: hidden; /* 防止整体出现滚动条 */
 }
 
-.sidebar {
-    width: 300px;
-    flex-shrink: 0;
-    padding-right: 24px;
-    border-right: 1px solid var(--border-color);
-}
-
-.main-content {
-    flex-grow: 1;
-}
-
-.filter-section, .sort-section, .export-section {
-    margin-bottom: 24px;
+/* 筛选区域 */
+.filter-section {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 24px;
 }
 
 .filter-row {
     display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: 12px;
+    margin-bottom: 16px;
     align-items: center;
 }
 
-.filter-column, .filter-operator, .filter-value {
-    flex-grow: 1;
+.filter-column, .filter-operator {
+    min-width: 150px;
 }
 
-.sort-controls {
+.filter-value {
+    flex: 1;
+    min-width: 200px;
+}
+
+.filter-actions {
     display: flex;
-    flex-direction: column;
     gap: 12px;
-    margin-top: 12px;
+    margin-top: 16px;
 }
 
-.sort-column, .sort-direction {
-    width: 100%;
-    margin-bottom: 8px;
-}
-
+/* 数据统计美化 */
 .data-stats {
-    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 0 0 16px 0;
 }
 
+.stats-item {
+    background-color: var(--secondary-color);
+    padding: 10px 16px;
+    border-radius: 10px;
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.stats-item strong {
+    color: var(--primary-dark);
+}
+
+/* 表格容器 - 关键部分 */
 .data-table-container {
-    height: 500px;
-    overflow-y: auto;
+    flex: 1;
+    min-height: 300px;
+    overflow: auto; /* 只在表格区域显示滚动条 */
     border: 1px solid var(--border-color);
     border-radius: 12px;
     background-color: #fff;
+    /* 增加内边距，避免表格紧贴边缘 */
+    padding: 0;
 }
 
+/* 表格样式 */
 .data-table {
     width: 100%;
     border-collapse: collapse;
-}
-
-.data-table th, .data-table td {
-    padding: 14px;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
 }
 
 .data-table th {
@@ -800,14 +812,118 @@ label {
     z-index: 1;
     cursor: pointer;
     font-weight: 600;
+    padding: 14px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
 }
 
 .data-table th:hover {
     background-color: #e8e8e8;
 }
 
+.data-table td {
+    padding: 14px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    /* 允许长内容，但设置合理的最小宽度 */
+    min-width: 120px;
+    /* 根据内容类型可以有不同的样式 */
+}
+
+/* 数字列右对齐 */
+.data-table td.number-cell {
+    text-align: right;
+}
+
+/* 日期列格式 */
+.data-table td.date-cell {
+    white-space: nowrap;
+}
+
+/* 长文本内容处理 */
+.data-table td.text-cell {
+    max-width: 300px;
+    white-space: normal; /* 允许换行 */
+    word-break: break-word; /* 长单词可以换行 */
+}
+
 .data-table tr:hover {
     background-color: var(--primary-light);
+}
+
+/* 分页区域 */
+.pagination {
+    display: flex;
+    justify-content: center;
+    margin: 16px 0;
+    gap: 8px;
+}
+
+.page-btn {
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.page-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+/* 底部导出区域 */
+.export-section {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .filter-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .filter-column, .filter-operator, .filter-value {
+        width: 100%;
+        margin-bottom: 8px;
+    }
+    
+    .data-table-container {
+        min-height: 200px;
+    }
+    
+    .data-stats {
+        flex-direction: column;
+    }
+}
+
+/* 自定义滚动条样式，使其看起来更现代 */
+.data-table-container::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.data-table-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 5px;
+}
+
+.data-table-container::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 5px;
+}
+
+.data-table-container::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* 滚动条交叉点样式 */
+.data-table-container::-webkit-scrollbar-corner {
+    background: #f1f1f1;
 }
 
 /* Modals */
@@ -1090,4 +1206,103 @@ label {
     .steps {
         flex-wrap: wrap;
     }
+}
+
+/* 添加一个可拖动区域样式 */
+.window-drag-area {
+    -webkit-app-region: drag; /* 使区域可拖动 */
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+/* 确保内部按钮不是可拖动的 */
+.window-drag-area button {
+    -webkit-app-region: no-drag;
+}
+
+/* 窗口控件容器 */
+.window-controls {
+    display: flex;
+    gap: 8px;
+    margin-left: 16px;
+}
+
+/* 窗口控制按钮基础样式 */
+.window-control {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    background-color: var(--secondary-color);
+    transition: all 0.2s;
+    color: var(--text-secondary);
+}
+
+.window-control:hover {
+    background-color: #e5e5ea;
+}
+
+/* 最小化按钮特定样式 */
+.minimize-btn:hover {
+    color: var(--primary-color);
+}
+
+/* 关闭按钮特定样式 */
+.close-btn:hover {
+    background-color: var(--error-color);
+    color: white;
+}
+
+/* 修改 app-header 样式，确保它可以正确拖动 */
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    padding: 12px 20px;
+    -webkit-app-region: drag; /* 整个头部可拖动 */
+}
+
+/* 确保头部的交互元素不是可拖动的 */
+.app-header button,
+.app-header .header-actions,
+.app-header input,
+.app-header select {
+    -webkit-app-region: no-drag;
+}
+
+/* 自定义头部样式，增加一个浅色背景，更像标题栏 */
+.app-header {
+    background-color: #f5f5f7;
+    border-radius: 12px 12px 0 0;
+    margin-bottom: 0;
+}
+
+/* 调整应用容器样式，移除顶部内边距 */
+.app-container {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 24px 24px 24px;
+    border-radius: 12px;
+    overflow: hidden; /* 避免圆角溢出 */
+}
+
+/* 调整内容区域样式 */
+.app-content {
+    position: relative;
+    background-color: white;
+    border-radius: 0 0 12px 12px;
+    padding: 24px;
+    box-shadow: var(--card-shadow);
+}
+
+/* 对于无边框窗口，增加一个轻微的阴影效果 */
+body {
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }

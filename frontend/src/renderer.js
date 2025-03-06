@@ -107,6 +107,10 @@ const elements = {
     manageTemplatesBtn: document.getElementById('manageTemplatesBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
 
+    // 窗口控制按钮
+    minimizeBtn: document.getElementById('minimizeBtn'),
+    closeBtn: document.getElementById('closeBtn'),
+
     // Overlay
     overlay: document.getElementById('overlay')
 };
@@ -292,6 +296,15 @@ function addEventListeners() {
     });
     elements.newTemplateBtn.addEventListener('click', openTemplateEditor);
 
+    // 窗口控制按钮事件
+    elements.minimizeBtn.addEventListener('click', () => {
+        window.electronAPI.minimizeWindow();
+    });
+    
+    elements.closeBtn.addEventListener('click', () => {
+        window.electronAPI.closeWindow();
+    });
+
     // Template Editor
     elements.addFieldBtn.addEventListener('click', addTemplateField);
     elements.cancelTemplateBtn.addEventListener('click', closeTemplateEditor);
@@ -310,7 +323,6 @@ function addEventListeners() {
     // Database Viewer
     elements.addFilterBtn.addEventListener('click', addFilterRow);
     elements.applyFiltersBtn.addEventListener('click', applyFilters);
-    elements.applySortBtn.addEventListener('click', applySort);
     elements.exportExcelBtn.addEventListener('click', exportToExcel);
 
     // Settings
@@ -1539,7 +1551,7 @@ async function loadData(page = 1, filters = [], sortBy = null, sortDirection = '
     }
 }
 
-// Render data table
+// 修改 renderDataTable 函数，使表头点击直接应用排序
 function renderDataTable(data, totalCount, currentPage, pageSize) {
     if (!data || data.length === 0) {
         elements.dataTableHead.innerHTML = '<tr><th>无数据</th></tr>';
@@ -1548,41 +1560,114 @@ function renderDataTable(data, totalCount, currentPage, pageSize) {
         return;
     }
 
-    // Get columns from first row
-    const columns = Object.keys(data[0]);
+    // 获取列类型信息（这部分可能需要根据你的数据结构调整）
+    const columnTypes = {};
+    for (const column in data[0]) {
+        // 尝试根据值判断列类型
+        let value = data[0][column];
+        if (typeof value === 'number') {
+            columnTypes[column] = 'number';
+        } else if (value instanceof Date || (typeof value === 'string' && !isNaN(Date.parse(value)))) {
+            columnTypes[column] = 'date';
+        } else {
+            columnTypes[column] = 'text';
+        }
+    }
 
-    // Render table header
+    // 渲染表头
     elements.dataTableHead.innerHTML = '';
     const headerRow = document.createElement('tr');
 
-    columns.forEach(column => {
+    // 获取当前排序信息
+    const currentSortColumn = elements.sortColumn.value;
+    const currentSortDirection = elements.sortDirection.value;
+
+    for (const column in data[0]) {
         const th = document.createElement('th');
         th.textContent = column;
-        th.onclick = () => applySortDirect(column);
+        
+        // 添加排序指示器
+        if (column === currentSortColumn) {
+            const indicator = document.createElement('span');
+            indicator.className = 'sort-indicator';
+            indicator.textContent = currentSortDirection === 'asc' ? ' ↑' : ' ↓';
+            th.appendChild(indicator);
+        }
+        
+        // 点击表头直接应用排序
+        th.onclick = () => {
+            // 如果已经按这列排序，则切换方向
+            if (column === currentSortColumn) {
+                elements.sortDirection.value = currentSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                elements.sortColumn.value = column;
+                elements.sortDirection.value = 'asc';
+            }
+            
+            // 应用排序
+            applySort();
+        };
+        
         headerRow.appendChild(th);
-    });
+    }
 
     elements.dataTableHead.appendChild(headerRow);
 
-    // Render table body
+    // 渲染表格内容
     elements.dataTableBody.innerHTML = '';
 
     data.forEach(row => {
         const tr = document.createElement('tr');
 
-        columns.forEach(column => {
+        for (const column in row) {
             const td = document.createElement('td');
-            td.textContent = row[column] !== null ? row[column] : '';
+            
+            // 根据列类型添加适当的类和格式化
+            if (columnTypes[column] === 'number') {
+                td.className = 'number-cell';
+                td.textContent = row[column] !== null ? formatNumber(row[column]) : '';
+            } else if (columnTypes[column] === 'date') {
+                td.className = 'date-cell';
+                td.textContent = row[column] !== null ? formatDate(row[column]) : '';
+            } else {
+                td.className = 'text-cell';
+                td.textContent = row[column] !== null ? row[column] : '';
+            }
+            
             tr.appendChild(td);
-        });
+        }
 
         elements.dataTableBody.appendChild(tr);
     });
 
-    // Create pagination
+    // 创建分页
     createPagination(totalCount, currentPage, pageSize, elements.dataPagination, page => {
         loadData(page, getFilters(), elements.sortColumn.value, elements.sortDirection.value);
     });
+}
+
+// 添加格式化函数
+function formatNumber(num) {
+    // 根据需要格式化数字
+    if (typeof num === 'number') {
+        return num.toLocaleString();
+    }
+    return num;
+}
+
+function formatDate(date) {
+    // 格式化日期
+    if (date instanceof Date) {
+        return date.toLocaleDateString();
+    } else if (typeof date === 'string') {
+        try {
+            const d = new Date(date);
+            if (!isNaN(d.getTime())) {
+                return d.toLocaleDateString();
+            }
+        } catch (e) {}
+    }
+    return date;
 }
 
 // Initialize filter controls
@@ -1690,10 +1775,10 @@ function applyFilters() {
 
 // Initialize sort controls
 function initSortControls() {
-    // Clear existing options
+    // 清除现有选项
     elements.sortColumn.innerHTML = '';
 
-    // Add template fields as options
+    // 添加模板字段作为选项
     const template = templates[currentTemplate];
     for (const field in template) {
         const option = document.createElement('option');
@@ -1703,11 +1788,20 @@ function initSortControls() {
     }
 }
 
-// Apply sort directly from column header
+// 应用排序（现在从表头点击直接调用）
+function applySort() {
+    const filters = getFilters();
+    const sortBy = elements.sortColumn.value;
+    const sortDirection = elements.sortDirection.value;
+
+    loadData(1, filters, sortBy, sortDirection);
+}
+
+// 从列头直接应用排序
 function applySortDirect(column) {
-    // Update sort controls
+    // 更新排序控件
     if (elements.sortColumn.value === column) {
-        // Toggle direction
+        // 切换方向
         elements.sortDirection.value = elements.sortDirection.value === 'asc' ? 'desc' : 'asc';
     } else {
         elements.sortColumn.value = column;
@@ -1715,15 +1809,6 @@ function applySortDirect(column) {
     }
 
     applySort();
-}
-
-// Apply sort
-function applySort() {
-    const filters = getFilters();
-    const sortBy = elements.sortColumn.value;
-    const sortDirection = elements.sortDirection.value;
-
-    loadData(1, filters, sortBy, sortDirection);
 }
 
 // Export to Excel
