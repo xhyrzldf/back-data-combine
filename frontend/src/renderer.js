@@ -8,6 +8,7 @@ let currentDatabase = null;
 let currentRejectedRow = null;
 let currentStep = 1;
 let showRecentFiles = true;
+let modalStack = [];
 
 // API Base URL
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -1952,7 +1953,6 @@ function updateSettingsTemplatesList() {
         editBtn.className = 'btn small';
         editBtn.textContent = '编辑';
         editBtn.onclick = () => {
-            closeModal('settingsModal');
             currentTemplate = name;
             openTemplateEditor(false);
         };
@@ -2017,22 +2017,53 @@ function saveSettings() {
 }
 
 // Open a modal
+// 打开模态窗口
 function openModal(modalId) {
-    document.getElementById(modalId).classList.add('active');
+    const modalElement = document.getElementById(modalId);
+    
+    // 如果已经有激活的模态窗口，调整其z-index使其在新窗口下面
+    if (modalStack.length > 0) {
+        const currentActiveModal = document.getElementById(modalStack[modalStack.length - 1]);
+        // 保持其活跃状态，但确保其在较低的z-index
+        currentActiveModal.style.zIndex = "100";
+    }
+    
+    // 将新模态窗口添加到堆栈并激活它
+    modalStack.push(modalId);
+    modalElement.classList.add('active');
+    modalElement.style.zIndex = "102"; // 高于其他模态窗口
+    
+    // 始终确保当任何模态窗口打开时overlay是可见的
     elements.overlay.classList.add('active');
 }
 
-// Close a specific modal
+// 关闭特定模态窗口
 function closeModal(modalId) {
-    document.getElementById(modalId).classList.remove('active');
-    elements.overlay.classList.remove('active');
+    const modalElement = document.getElementById(modalId);
+    modalElement.classList.remove('active');
+    
+    // 从堆栈中移除此模态窗口
+    const index = modalStack.indexOf(modalId);
+    if (index > -1) {
+        modalStack.splice(index, 1);
+    }
+    
+    // 如果堆栈中仍有模态窗口，使顶部的那个激活
+    if (modalStack.length > 0) {
+        const topModal = document.getElementById(modalStack[modalStack.length - 1]);
+        topModal.style.zIndex = "102"; // 确保它在顶部
+    } else {
+        // 没有模态窗口了，隐藏overlay
+        elements.overlay.classList.remove('active');
+    }
 }
 
-// Close all modals
+// 关闭所有模态窗口
 function closeAllModals() {
     document.querySelectorAll('.modal').forEach(modal => {
         modal.classList.remove('active');
     });
+    modalStack = []; // 清空模态窗口堆栈
     elements.overlay.classList.remove('active');
 }
 

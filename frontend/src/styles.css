@@ -978,7 +978,7 @@ label {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 100;
+    z-index: 100; /* Base z-index for modals */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -991,6 +991,11 @@ label {
     visibility: visible;
     opacity: 1;
     transition: visibility 0s, opacity 0.2s;
+}
+
+/* Ensure overlay is always below all modals */
+.overlay {
+    z-index: 99;
 }
 
 .modal-content {
