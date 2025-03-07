@@ -9,6 +9,7 @@ let currentRejectedRow = null;
 let currentStep = 1;
 let showRecentFiles = true;
 let modalStack = [];
+let templateMemory = {};
 
 // API Base URL
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -116,30 +117,35 @@ const elements = {
     overlay: document.getElementById('overlay')
 };
 
-// Initialize the application
+// 初始化应用程序
 async function initApp() {
-    // Check if backend is running
+    // 检查后端是否运行
     try {
         const response = await fetch(`${API_BASE_URL}/ping`);
         const data = await response.json();
 
         if (data.status !== 'success') {
-            alert('Failed to connect to backend server. Please restart the application.');
+            alert('无法连接到后端服务器。请重启应用程序。');
             return;
         }
     } catch (error) {
-        alert('Failed to connect to backend server. Please restart the application.');
+        alert('无法连接到后端服务器。请重启应用程序。');
         return;
     }
 
-    // Load templates
+    // 加载模板
     await loadTemplates();
 
-    // Load recent files
+    // 加载最近文件
     await loadRecentFiles();
 
-    // Add event listeners
+    // 添加事件监听器
     addEventListeners();
+    
+    // 初始化模板记忆功能
+    loadTemplateMemory();
+    initTemplateMemory();
+    initTemplateMemoryUI();
 }
 
 // Load templates from backend
@@ -507,6 +513,290 @@ function openTemplateEditor(isNewTemplate = true) {
     openModal('templateEditorModal');
 }
 
+
+// 计算文件签名（排序后的列名）
+function calculateFileSignature(columns) {
+    return columns.map(col => col.toString().trim()).sort().join('|');
+}
+
+// 更新startFileAnalysis函数，检查已有映射
+async function startFileAnalysisWithMemory() {
+    const originalStartFileAnalysis = startFileAnalysis;
+    
+    startFileAnalysis = async function() {
+        elements.analysisProgress.style.display = 'block';
+        elements.mappingResults.innerHTML = '';
+        elements.goToStep4Btn.disabled = true;
+        
+        // 重置列映射
+        columnMappings = {};
+        
+        // 跟踪文件签名，判断是否找到匹配
+        const fileSignatures = {};
+        let foundExistingMapping = false;
+        
+        // 逐个分析文件
+        for (let i = 0; i < selectedFiles.length; i++) {
+            const file = selectedFiles[i];
+            const fileName = file.split('/').pop().split('\\').pop();
+            
+            // 更新进度
+            const progress = ((i + 1) / selectedFiles.length) * 100;
+            const progressFill = elements.analysisProgress.querySelector('.progress-fill');
+            const progressText = elements.analysisProgress.querySelector('.progress-text');
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `正在分析文件 ${i+1}/${selectedFiles.length}: ${fileName}`;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/analyze-file`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_path: file,
+                        template_name: currentTemplate
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    // 计算文件签名
+                    const signature = calculateFileSignature(data.columns.map(c => c.original_name));
+                    fileSignatures[fileName] = signature;
+                    
+                    // 检查是否有此签名的存储映射
+                    if (templateMemory[currentTemplate] && 
+                        templateMemory[currentTemplate][signature]) {
+                        foundExistingMapping = true;
+                    }
+                    
+                    // 显示映射UI
+                    displayFileMapping(data, i);
+                } else {
+                    console.error(`分析文件失败 ${fileName}: ${data.message}`);
+                }
+            } catch (error) {
+                console.error(`分析文件失败 ${fileName}:`, error);
+            }
+        }
+        
+        // 如果找到已有映射，提示用户
+        if (foundExistingMapping) {
+            setTimeout(async () => {
+                const useExisting = await showDynamicConfirm(
+                    '检测到相同字段的Excel文件已经导入过。是否应用之前的字段映射设置？\n\n选择"确定"将覆盖默认的智能匹配结果。', 
+                    '应用已有映射'
+                );
+                
+                if (useExisting) {
+                    // 应用存储的映射
+                    applyStoredMappings(fileSignatures);
+                }
+            }, 500);
+        }
+        
+        // 更新映射警告
+        updateMappingWarnings();
+        elements.goToStep4Btn.disabled = false;
+    };
+    
+    // 调用更新后的函数
+    return startFileAnalysis();
+}
+
+// 应用存储的映射到当前文件
+function applyStoredMappings(fileSignatures) {
+    for (const fileName in fileSignatures) {
+        const signature = fileSignatures[fileName];
+        
+        if (templateMemory[currentTemplate] && 
+            templateMemory[currentTemplate][signature]) {
+            
+            const storedMapping = templateMemory[currentTemplate][signature];
+            
+            // 初始化此文件的列映射
+            if (!columnMappings[fileName]) {
+                columnMappings[fileName] = {};
+            }
+            
+            // 应用存储的映射
+            for (const originalCol in storedMapping) {
+                columnMappings[fileName][originalCol] = storedMapping[originalCol];
+            }
+            
+            // 更新UI以反映这些映射
+            const fileEls = document.querySelectorAll('.mapping-file');
+            
+            fileEls.forEach(fileEl => {
+                const headerEl = fileEl.querySelector('.mapping-file-header h4');
+                if (headerEl && headerEl.textContent.includes(fileName)) {
+                    const selects = fileEl.querySelectorAll('.mapping-select');
+                    
+                    selects.forEach(select => {
+                        const columnEl = select.closest('.mapping-column');
+                        const nameEl = columnEl.querySelector('.column-name');
+                        
+                        if (nameEl) {
+                            const originalColName = nameEl.textContent;
+                            
+                            if (storedMapping[originalColName]) {
+                                select.value = storedMapping[originalColName];
+                                
+                                // 触发change事件更新视觉效果和内部状态
+                                const event = new Event('change');
+                                select.dispatchEvent(event);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+    }
+    
+    // 更新冲突警告
+    updateMappingWarnings();
+}
+
+// 存储当前映射
+function storeCurrentMappings() {
+    // 确保templateMemory有当前模板的条目
+    if (!templateMemory[currentTemplate]) {
+        templateMemory[currentTemplate] = {};
+    }
+    
+    // 对每个文件，按签名存储其映射
+    for (const fileName in columnMappings) {
+        // 获取该文件的映射结果元素
+        const fileEls = document.querySelectorAll('.mapping-file');
+        
+        for (const fileEl of fileEls) {
+            const headerEl = fileEl.querySelector('.mapping-file-header h4');
+            if (headerEl && headerEl.textContent.includes(fileName)) {
+                const columns = fileEl.querySelectorAll('.mapping-column');
+                
+                // 获取所有列名创建签名
+                const columnNames = [];
+                columns.forEach(col => {
+                    const nameEl = col.querySelector('.column-name');
+                    if (nameEl) {
+                        columnNames.push(nameEl.textContent);
+                    }
+                });
+                
+                // 计算签名
+                const signature = calculateFileSignature(columnNames);
+                
+                // 存储映射
+                templateMemory[currentTemplate][signature] = {...columnMappings[fileName]};
+                break;
+            }
+        }
+    }
+    
+    // 保存到本地存储以持久化
+    localStorage.setItem('templateMemory', JSON.stringify(templateMemory));
+    
+    console.log('存储模板映射:', templateMemory);
+}
+
+// 启动时从存储加载模板记忆
+function loadTemplateMemory() {
+    try {
+        const stored = localStorage.getItem('templateMemory');
+        if (stored) {
+            templateMemory = JSON.parse(stored);
+            console.log('加载模板记忆:', templateMemory);
+        }
+    } catch (e) {
+        console.error('加载模板记忆失败:', e);
+    }
+}
+
+// 添加模板记忆系统的钩子
+function initTemplateMemory() {
+    // 加载存储的映射
+    loadTemplateMemory();
+    
+    // 重写startFileAnalysis
+    startFileAnalysisWithMemory();
+    
+    // 重写displayFileMapping
+    updateDisplayFileMappingWithConflictResolution();
+    updateDisplayFileMappingWithMemory();
+    
+    // 添加钩子，在处理成功完成时存储映射
+    const originalFinishProcessing = finishProcessing;
+    finishProcessing = function() {
+        // 存储当前映射
+        storeCurrentMappings();
+        
+        // 调用原始函数
+        originalFinishProcessing();
+    };
+}
+
+async function showDynamicConfirm(message, title = "确认操作") {
+    return new Promise((resolve) => {
+        // 创建一个唯一ID
+        const modalId = 'confirm_' + Date.now();
+        
+        // 创建模态窗口元素
+        const modalEl = document.createElement('div');
+        modalEl.id = modalId;
+        modalEl.className = 'modal';
+        
+        // 设置模态窗口内容
+        modalEl.innerHTML = `
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h3>${title}</h3>
+                    <button class="close-modal">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="text-align: center; padding: 24px;">
+                    <p>${message}</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn secondary cancel-btn">取消</button>
+                    <button class="btn primary ok-btn">确定</button>
+                </div>
+            </div>
+        `;
+        
+        // 添加到文档
+        document.body.appendChild(modalEl);
+        
+        // 打开模态窗口
+        openModal(modalId);
+        
+        // 添加按钮事件
+        const closeHandler = () => {
+            closeModal(modalId);
+            setTimeout(() => {
+                document.body.removeChild(modalEl);
+            }, 300);
+            resolve(false);
+        };
+        
+        const okHandler = () => {
+            closeModal(modalId);
+            setTimeout(() => {
+                document.body.removeChild(modalEl);
+            }, 300);
+            resolve(true);
+        };
+        
+        // 绑定事件
+        modalEl.querySelector('.close-modal').addEventListener('click', closeHandler);
+        modalEl.querySelector('.cancel-btn').addEventListener('click', closeHandler);
+        modalEl.querySelector('.ok-btn').addEventListener('click', okHandler);
+    });
+}
+
+
 // Add a field to the template editor
 function addTemplateField(field = '', type = 'text', synonyms = []) {
     const fieldEl = document.createElement('div');
@@ -614,6 +904,104 @@ function updateSynonymsList(synonyms) {
 
     // Store synonyms in data attribute
     elements.synonymsList.dataset.synonyms = JSON.stringify(synonyms);
+}
+
+// 更新模板映射的UI显示
+function updateTemplateMappingsUI() {
+    const mappingsContainer = document.getElementById('templateMappingsList');
+    if (!mappingsContainer) return;
+    
+    mappingsContainer.innerHTML = '';
+    
+    // 获取当前模板记忆
+    const currentTemplateMemory = templateMemory[currentTemplate] || {};
+    
+    if (Object.keys(currentTemplateMemory).length === 0) {
+        mappingsContainer.innerHTML = '<p>该模板还没有记住任何Excel表格的字段映射。</p>';
+        return;
+    }
+    
+    // 为每个映射创建一个卡片
+    Object.keys(currentTemplateMemory).forEach((signature, index) => {
+        const mappingEl = document.createElement('div');
+        mappingEl.className = 'template-mapping-card';
+        
+        // 从签名中提取列名
+        const columnNames = signature.split('|');
+        
+        // 创建带序号的标题
+        const headerEl = document.createElement('h5');
+        headerEl.innerHTML = `
+            <span>映射配置 #${index + 1} (${columnNames.length} 个字段)</span>
+            <span class="mapping-remove-btn" data-signature="${signature}">&times;</span>
+        `;
+        
+        // 创建映射表格
+        const tableEl = document.createElement('table');
+        tableEl.className = 'mapping-table';
+        
+        // 表格标题
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        headerRow.innerHTML = `
+            <th>Excel字段名</th>
+            <th>映射到模板字段</th>
+        `;
+        thead.appendChild(headerRow);
+        tableEl.appendChild(thead);
+        
+        // 表格主体
+        const tbody = document.createElement('tbody');
+        const mapping = currentTemplateMemory[signature];
+        
+        Object.keys(mapping).forEach(originalCol => {
+            if (mapping[originalCol]) { // 只显示已映射的字段
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${originalCol}</td>
+                    <td>${mapping[originalCol] || '<未映射>'}</td>
+                `;
+                tbody.appendChild(row);
+            }
+        });
+        
+        tableEl.appendChild(tbody);
+        
+        // 添加元素到容器
+        mappingEl.appendChild(headerEl);
+        mappingEl.appendChild(tableEl);
+        mappingsContainer.appendChild(mappingEl);
+    });
+    
+    // 为删除按钮添加事件监听器
+    mappingsContainer.querySelectorAll('.mapping-remove-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const signature = this.dataset.signature;
+            if (confirm('确定要删除这个字段映射配置吗？')) {
+                delete templateMemory[currentTemplate][signature];
+                localStorage.setItem('templateMemory', JSON.stringify(templateMemory));
+                updateTemplateMappingsUI();
+            }
+        });
+    });
+}
+
+// 重写openTemplateEditor函数以显示映射
+function updateOpenTemplateEditor() {
+    const originalOpenTemplateEditor = openTemplateEditor;
+    
+    openTemplateEditor = function(isNewTemplate = true) {
+        // 调用原始函数
+        originalOpenTemplateEditor(isNewTemplate);
+        
+        // 更新模板映射显示
+        updateTemplateMappingsUI();
+    };
+}
+
+// 初始化UI增强
+function initTemplateMemoryUI() {
+    updateOpenTemplateEditor();
 }
 
 // Add a synonym to the list
@@ -1114,6 +1502,9 @@ async function startProcessing() {
             // Store current database
             currentDatabase = dbFile;
 
+            // 保存映射
+            storeCurrentMappings();
+
             // Enable next step
             elements.goToStep5Btn.disabled = false;
         } else {
@@ -1467,8 +1858,18 @@ function createPagination(totalCount, currentPage, pageSize, container, callback
 }
 
 // Finish processing and go to database viewer
+// 修改 finishProcessing 函数
 function finishProcessing() {
+    // 存储当前映射
+    storeCurrentMappings();
+    
+    // 打开数据库查看器
     openDatabase(currentDatabase);
+    
+    // 在返回首页前重新加载最近文件列表
+    loadRecentFiles().then(() => {
+        console.log("最近文件列表已刷新");
+    });
 }
 
 // Open a database file in the viewer
@@ -1917,6 +2318,148 @@ function hasMappingConflicts() {
     return Object.keys(conflicts).length > 0;
 }
 
+// 检测并解决映射冲突，选择最高匹配度的映射
+function detectAndResolveMappingConflicts(columns) {
+    // 创建一个映射来跟踪每个目标字段的所有映射
+    const targetFieldMap = {};
+    
+    // 第一步：收集每个目标字段的所有映射
+    columns.forEach(column => {
+        if (column.mapped_to) {
+            if (!targetFieldMap[column.mapped_to]) {
+                targetFieldMap[column.mapped_to] = [];
+            }
+            
+            targetFieldMap[column.mapped_to].push({
+                original_name: column.original_name,
+                similarity: column.similarity
+            });
+        }
+    });
+    
+    // 处理冲突并为每个目标字段选择最佳匹配
+    for (const targetField in targetFieldMap) {
+        const mappings = targetFieldMap[targetField];
+        
+        // 如果多个列映射到同一个目标，解决冲突
+        if (mappings.length > 1) {
+            // 按相似度分数排序（最高的在前）
+            mappings.sort((a, b) => b.similarity - a.similarity);
+            
+            // 排序后的第一个是最佳匹配
+            const bestMapping = mappings[0];
+            
+            // 对于除最佳匹配外的所有列，清除映射
+            columns.forEach(column => {
+                if (column.mapped_to === targetField && 
+                    column.original_name !== bestMapping.original_name) {
+                    
+                    // 清除非最佳匹配的映射
+                    column.mapped_to = null;
+                    column.conflict_resolved = true;
+                    column.conflict_info = `映射冲突，已选择最佳匹配: ${bestMapping.original_name} (${(bestMapping.similarity * 100).toFixed(0)}% 匹配度)`;
+                }
+            });
+        }
+    }
+    
+    return columns;
+}
+
+// 更新displayFileMapping函数以使用冲突解决
+function updateDisplayFileMappingWithMemory() {
+    // 保存原始函数
+    const originalDisplayFileMapping = displayFileMapping;
+    
+    // 重写 displayFileMapping 函数
+    displayFileMapping = function(data, fileIndex) {
+        // 检查是否已选择应用记忆模板
+        if (window.applyingStoredMappings) {
+            // 如果正在应用记忆模板，清除智能匹配结果
+            data.columns.forEach(column => {
+                column.mapped_to = null;  // 清除默认映射
+                column.similarity = 0;    // 重置相似度
+            });
+        } else {
+            // 否则，应用冲突解决
+            data.columns = detectAndResolveMappingConflicts(data.columns);
+        }
+        
+        // 调用原始实现
+        originalDisplayFileMapping(data, fileIndex);
+    };
+}
+
+// 修改 applyStoredMappings 函数
+function applyStoredMappings(fileSignatures) {
+    // 设置标志，指示正在应用存储的映射
+    window.applyingStoredMappings = true;
+    
+    for (const fileName in fileSignatures) {
+        const signature = fileSignatures[fileName];
+        
+        if (templateMemory[currentTemplate] && 
+            templateMemory[currentTemplate][signature]) {
+            
+            const storedMapping = templateMemory[currentTemplate][signature];
+            
+            // 初始化此文件的列映射
+            if (!columnMappings[fileName]) {
+                columnMappings[fileName] = {};
+            } else {
+                // 清除现有映射
+                for (const key in columnMappings[fileName]) {
+                    columnMappings[fileName][key] = '';
+                }
+            }
+            
+            // 应用存储的映射
+            for (const originalCol in storedMapping) {
+                if (storedMapping[originalCol]) { // 只应用非空映射
+                    columnMappings[fileName][originalCol] = storedMapping[originalCol];
+                }
+            }
+            
+            // 更新UI以反映这些映射
+            const fileEls = document.querySelectorAll('.mapping-file');
+            
+            fileEls.forEach(fileEl => {
+                const headerEl = fileEl.querySelector('.mapping-file-header h4');
+                if (headerEl && headerEl.textContent.includes(fileName)) {
+                    // 清除所有现有选择
+                    const selects = fileEl.querySelectorAll('.mapping-select');
+                    selects.forEach(select => {
+                        select.value = ''; // 重置为"不映射"
+                    });
+                    
+                    // 然后应用存储的映射
+                    selects.forEach(select => {
+                        const columnEl = select.closest('.mapping-column');
+                        const nameEl = columnEl.querySelector('.column-name');
+                        
+                        if (nameEl) {
+                            const originalColName = nameEl.textContent;
+                            
+                            if (storedMapping[originalColName]) {
+                                select.value = storedMapping[originalColName];
+                                
+                                // 触发change事件更新视觉效果和内部状态
+                                const event = new Event('change');
+                                select.dispatchEvent(event);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+    }
+    
+    // 重置标志
+    window.applyingStoredMappings = false;
+    
+    // 更新冲突警告
+    updateMappingWarnings();
+}
 // Open settings modal
 function openSettings() {
     // Update showRecentFiles checkbox

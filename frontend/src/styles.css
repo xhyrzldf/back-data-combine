@@ -1369,3 +1369,68 @@ body {
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
+
+/* 模板映射记忆UI样式 */
+.template-mappings-container {
+    margin-top: 24px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+}
+
+.template-mappings-list {
+    margin-top: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.template-mapping-card {
+    margin-bottom: 16px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background-color: #fafafa;
+}
+
+.template-mapping-card h5 {
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.mapping-remove-btn {
+    cursor: pointer;
+    color: var(--error-color);
+    font-size: 16px;
+}
+
+.mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+.mapping-table th, .mapping-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid var(--border-color);
+}
+
+.mapping-table th {
+    background-color: #f5f5f7;
+    font-weight: 500;
+}
+
+.mapping-table tr:nth-child(odd) {
+    background-color: #ffffff;
+}
+
+.conflict-info {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--warning-color);
+    padding: 4px 8px;
+    border-radius: 4px;
+    background-color: rgba(255, 149, 0, 0.1);
+}
