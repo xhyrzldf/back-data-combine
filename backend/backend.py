@@ -87,12 +87,15 @@ def create_database(db_path):
 
     cursor.execute(f"CREATE TABLE IF NOT EXISTS transactions ({', '.join(columns)})")
 
-    # Create a table for rejected rows that need manual verification
-    cursor.execute(f"""
+    # 创建带新列的rejected_rows表
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS rejected_rows (
         id INTEGER PRIMARY KEY,
         source_file TEXT,
         row_number INTEGER,
+        column_name TEXT,
+        target_column TEXT,
+        original_value TEXT,
         raw_data TEXT,
         reason TEXT
     )
@@ -100,7 +103,6 @@ def create_database(db_path):
 
     conn.commit()
     conn.close()
-
 
 def update_recent_files(file_path):
     """Update the list of recent files"""
@@ -563,6 +565,9 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                 file_mapping = column_mappings[path]
                 break
     
+    # 调试输出当前的映射情况
+    print(f"文件 {file_name} 的列映射: {file_mapping}", file=sys.stderr, flush=True)
+    
     # 处理每一行
     for idx, row in df.iterrows():
         try:
@@ -590,13 +595,15 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
             }
 
             has_data = False
-            row_has_errors = False  # 新增：标记该行是否有转换错误
-            error_msgs = []  # 新增：收集错误信息
+            row_has_errors = False  # 标记该行是否有转换错误
             
             for orig_col, target_col in file_mapping.items():
                 if orig_col in df.columns and target_col:
                     try:
                         value = row[orig_col]
+                        # 记录原始值，方便出错时记录
+                        original_value = str(value) if pd.notna(value) else None
+                        
                         if pd.notna(value) and str(value).strip():
                             has_data = True
 
@@ -607,52 +614,70 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                                 target_type = template[target_col]["type"]
                                 break
 
-                        # 转换数据类型
+                        # 尝试转换数据类型
                         mapped_row[target_col] = convert_value(value, target_type)
                     except Exception as conv_error:
+                        # 详细记录错误信息
                         error_msg = f"转换错误 行 {row_number}, 列 {orig_col}: {str(conv_error)}"
                         print(error_msg, file=sys.stderr, flush=True)
-                        error_msgs.append(error_msg)
-                        row_has_errors = True  # 标记该行存在错误
-                        # 仍然设置为空值，以防万一检验条件失败
+                        
+                        # 标记行有错误
+                        row_has_errors = True
+                        
+                        # 创建rejected_row记录，确保包含列名和原始值
+                        try:
+                            # 保证有值的original_value
+                            safe_original_value = original_value if original_value else "null"
+                            
+                            # 将每个出错的字段单独记录
+                            rejected_rows.append({
+                                "source_file": file_name,
+                                "row_number": row_number,
+                                "column_name": orig_col,  # 记录原始列名
+                                "target_column": target_col,  # 记录目标列名
+                                "original_value": safe_original_value,  # 原始值
+                                "raw_data": json.dumps(row.to_dict(), default=str),  # 整行数据
+                                "reason": str(conv_error)  # 错误原因
+                            })
+                            
+                            # 打印调试信息
+                            print(f"创建rejected_row: 列={orig_col}, 目标列={target_col}, 原始值={safe_original_value}", 
+                                  file=sys.stderr, flush=True)
+                        except Exception as e:
+                            print(f"创建rejected_row失败: {e}", file=sys.stderr, flush=True)
+                        
+                        # 重置目标列值
                         mapped_row[target_col] = None
 
             # 跳过空行
             if not has_data:
                 continue
 
-            # 如果行有转换错误，将其添加到被拒绝的行列表
-            if row_has_errors:
-                try:
-                    row_dict = row.to_dict()
-                    row_json = json.dumps(row_dict, default=str)
-                except:
-                    row_json = str(row)
-                
+            # 如果行没有错误，添加到映射数据
+            if not row_has_errors:
+                mapped_data.append(mapped_row)
+            
+        except Exception as row_error:
+            # 处理整行错误
+            try:
                 rejected_rows.append({
                     "source_file": file_name,
                     "row_number": row_number,
-                    "raw_data": row_json,
-                    "reason": "; ".join(error_msgs)  # 将所有错误消息合并
+                    "column_name": "整行错误",  # 标记为整行错误
+                    "target_column": "",  # 没有特定目标列
+                    "original_value": "整行处理失败",  # 简单描述
+                    "raw_data": json.dumps(row.to_dict(), default=str),  # 保存原始数据
+                    "reason": str(row_error)  # 错误原因
                 })
-            else:
-                # 只有没有错误的行才添加到映射数据
-                mapped_data.append(mapped_row)
-                
-        except Exception as row_error:
-            # 添加到被拒绝的行（处理整行的其他错误）
-            try:
-                row_dict = row.to_dict()
-                row_json = json.dumps(row_dict, default=str)
-            except:
-                row_json = str(row)
-                
-            rejected_rows.append({
-                "source_file": file_name,
-                "row_number": start_row + idx + 1,
-                "raw_data": row_json,
-                "reason": str(row_error)
-            })
+                print(f"整行处理错误: 行={row_number}, 错误={str(row_error)}", file=sys.stderr, flush=True)
+            except Exception as e:
+                print(f"创建整行错误记录失败: {e}", file=sys.stderr, flush=True)
+    
+    # 打印处理结果摘要
+    print(f"处理结果: {file_name} - 映射数据: {len(mapped_data)}行, 被拒绝: {len(rejected_rows)}行", 
+          file=sys.stderr, flush=True)
+    if rejected_rows:
+        print(f"示例被拒绝行: {rejected_rows[0]}", file=sys.stderr, flush=True)
     
     return {"mapped_data": mapped_data, "rejected_rows": rejected_rows}
 
@@ -675,38 +700,65 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
                     # 继续处理其他行
                     continue
 
-        # 插入被拒绝的行 - 关键修改部分
+        # 插入被拒绝的行
         if rejected_rows and len(rejected_rows) > 0:
             print(f"正在插入 {len(rejected_rows)} 条被拒绝的行...", file=sys.stderr, flush=True)
             
+            # 确保所有必要字段都存在
+            required_fields = [
+                "source_file", "row_number", "column_name", 
+                "target_column", "original_value", "raw_data", "reason"
+            ]
+            
             for row in rejected_rows:
+                # 确保所有字段都有值，没有值的用空字符串代替
+                for field in required_fields:
+                    if field not in row or row[field] is None:
+                        row[field] = ""
+                
                 # 确保raw_data是字符串
-                if isinstance(row["raw_data"], dict) or isinstance(row["raw_data"], list):
+                if isinstance(row["raw_data"], (dict, list)):
                     try:
                         row["raw_data"] = json.dumps(row["raw_data"], default=str)
                     except Exception as e:
                         print(f"序列化raw_data失败: {str(e)}", file=sys.stderr, flush=True)
                         row["raw_data"] = str(row["raw_data"])
                 
+                # 确保所有字段都是字符串形式
+                values = [
+                    row["source_file"],
+                    row["row_number"],
+                    row["column_name"],
+                    row["target_column"],
+                    row["original_value"],
+                    row["raw_data"],
+                    row["reason"]
+                ]
+                
+                # 打印插入的数据以进行调试
+                print(f"插入被拒绝行: {row['column_name']}={row['original_value']}", file=sys.stderr, flush=True)
+                
                 try:
                     # 使用参数化查询避免SQL注入
                     cursor.execute(
-                        "INSERT INTO rejected_rows (source_file, row_number, raw_data, reason) VALUES (?, ?, ?, ?)",
-                        (row["source_file"], row["row_number"], row["raw_data"], row["reason"])
+                        """INSERT INTO rejected_rows 
+                           (source_file, row_number, column_name, target_column, original_value, raw_data, reason) 
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        values
                     )
                     
                     # 检查是否真的插入了数据
                     if cursor.rowcount == 0:
-                        print(f"警告: 行似乎未被插入. 源文件: {row['source_file']}, 行号: {row['row_number']}", 
+                        print(f"警告: 行似乎未被插入. source_file={row['source_file']}, row_number={row['row_number']}", 
                               file=sys.stderr, flush=True)
                 except sqlite3.Error as sql_error:
                     print(f"SQL错误(插入被拒绝行): {str(sql_error)}", file=sys.stderr, flush=True)
-                    print(f"问题数据: {row}", file=sys.stderr, flush=True)
+                    print(f"问题数据: {values}", file=sys.stderr, flush=True)
                     # 继续处理其他行
                     continue
                 except Exception as e:
                     print(f"插入被拒绝行时发生未知错误: {str(e)}", file=sys.stderr, flush=True)
-                    print(f"问题数据: {row}", file=sys.stderr, flush=True)
+                    print(f"问题数据: {values}", file=sys.stderr, flush=True)
                     continue
             
             # 执行一次手动提交确保数据被写入
@@ -859,15 +911,37 @@ def get_rejected_rows():
         results = []
         for row in rows:
             row_dict = {key: row[key] for key in row.keys()}
-            # 解析raw_data JSON
-            if 'raw_data' in row_dict:
+            
+            # 解析raw_data JSON，处理特殊情况
+            if 'raw_data' in row_dict and row_dict['raw_data']:
                 try:
-                    row_dict['raw_data'] = json.loads(row_dict['raw_data'])
-                except json.JSONDecodeError:
-                    # 如果不是有效的JSON，保持原样
-                    pass
+                    # 处理可能存在的特殊字符串值
+                    raw_data_str = row_dict['raw_data']
+                    if isinstance(raw_data_str, str):
+                        # 预处理可能导致问题的值
+                        raw_data_str = (raw_data_str
+                            .replace(': NaN,', ': "NaN",')
+                            .replace(': Infinity,', ': "Infinity",')
+                            .replace(': -Infinity,', ': "-Infinity",')
+                            .replace(': NaN}', ': "NaN"}')
+                            .replace(': Infinity}', ': "Infinity"}')
+                            .replace(': -Infinity}', ': "-Infinity"}'))
+                        
+                        try:
+                            # 尝试解析处理后的JSON
+                            row_dict['raw_data'] = json.loads(raw_data_str)
+                        except json.JSONDecodeError as json_err:
+                            # 如果仍然失败，记录错误并保留原始字符串
+                            print(f"警告: JSON解析失败 (ID={row_dict.get('id')}): {str(json_err)}", 
+                                file=sys.stderr, flush=True)
+                            # 不做任何修改，保留原始字符串
+                            # 但确保前端能安全处理
+                            # 在这里我们确保字符串不会导致前端JSON解析错误
+                            row_dict['raw_data'] = {"原始数据无法解析": raw_data_str[:100] + "..."}
                 except Exception as e:
-                    print(f"解析raw_data时出错: {str(e)}", file=sys.stderr, flush=True)
+                    print(f"处理raw_data时出错: {str(e)}", file=sys.stderr, flush=True)
+                    row_dict['raw_data'] = {"错误": f"数据处理错误: {str(e)}"}
+                    
             results.append(row_dict)
 
         conn.close()
@@ -911,12 +985,52 @@ def process_rejected_row():
             if not row:
                 return jsonify({"status": "error", "message": f"Rejected row {row_id} not found"}), 404
 
-            # Insert the fixed data into transactions
-            columns = list(fixed_data.keys())
-            placeholders = ", ".join(["?" for _ in columns])
-            values = [fixed_data[col] for col in columns]
-
-            cursor.execute(f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})", values)
+            # 从SQLite结果创建字典
+            row_dict = {}
+            cursor.description = cursor.description or []
+            for i, col in enumerate(cursor.description):
+                row_dict[col[0]] = row[i]
+            
+            # 获取原始行号和文件
+            source_file = fixed_data.get("source_file") or row_dict.get("source_file")
+            row_number = fixed_data.get("row_number") or row_dict.get("row_number")
+            
+            # 查找是否已存在这个行的数据
+            cursor.execute(
+                "SELECT * FROM transactions WHERE source_file = ? AND row_number = ?", 
+                (source_file, row_number)
+            )
+            existing_row = cursor.fetchone()
+            
+            if existing_row:
+                # 如果已存在，执行更新
+                for field, value in fixed_data.items():
+                    if field in ["source_file", "row_number"]:
+                        continue  # 跳过这些字段
+                    
+                    # 更新字段值
+                    cursor.execute(
+                        f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
+                        (value, source_file, row_number)
+                    )
+            else:
+                # 如果不存在，插入新行
+                columns = list(fixed_data.keys())
+                placeholders = ", ".join(["?" for _ in columns])
+                values = [fixed_data[col] for col in columns]
+                
+                # 确保必要的元数据字段存在
+                if "source_file" not in fixed_data:
+                    columns.append("source_file")
+                    values.append(source_file)
+                if "row_number" not in fixed_data:
+                    columns.append("row_number")
+                    values.append(row_number)
+                
+                cursor.execute(
+                    f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({', '.join(['?' for _ in values])})",
+                    values
+                )
 
             # Delete the rejected row
             cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
@@ -929,8 +1043,9 @@ def process_rejected_row():
             "message": f"Rejected row {row_id} processed successfully"
         })
     except Exception as e:
+        print(f"处理拒绝行失败: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         return jsonify({"status": "error", "message": str(e)}), 500
-
 
 @app.route('/api/export-excel', methods=['POST'])
 def export_excel():

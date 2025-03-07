@@ -1605,12 +1605,9 @@ function displayProcessingStats(data) {
     elements.processingStats.appendChild(statsEl);
 }
 
-
-//loadRejectedRows函数
 async function loadRejectedRows(page = 1) {
     if (!currentDatabase) return;
 
-    // 首先检查rejected_rows表中的行数，添加调试信息
     console.log(`正在加载拒绝行，数据库: ${currentDatabase}, 页码: ${page}`);
 
     try {
@@ -1639,12 +1636,25 @@ async function loadRejectedRows(page = 1) {
             if (data.total_count === 0) {
                 elements.verificationTableBody.innerHTML = `
                     <tr>
-                        <td colspan="4" style="text-align: center; padding: 20px;">
+                        <td colspan="5" style="text-align: center; padding: 20px;">
                             没有需要校对的行。如果您认为这不正确，请检查后端日志，可能有处理错误。
                         </td>
                     </tr>
                 `;
                 return;
+            }
+
+            // 更新表头以包含列名
+            if (elements.verificationTable.querySelector('thead')) {
+                elements.verificationTable.querySelector('thead').innerHTML = `
+                    <tr>
+                        <th>来源文件</th>
+                        <th>行号</th>
+                        <th>列名</th>
+                        <th>原始数据</th>
+                        <th>操作</th>
+                    </tr>
+                `;
             }
 
             // 显示行
@@ -1654,36 +1664,25 @@ async function loadRejectedRows(page = 1) {
                 const rowEl = document.createElement('tr');
 
                 const fileCell = document.createElement('td');
-                fileCell.textContent = row.source_file;
+                fileCell.textContent = row.source_file || '';
 
                 const rowNumberCell = document.createElement('td');
-                rowNumberCell.textContent = row.row_number;
+                rowNumberCell.textContent = row.row_number || '';
 
+                // 添加列名单元格
+                const columnNameCell = document.createElement('td');
+                columnNameCell.textContent = row.column_name || '未知列';
+
+                // 原始数据单元格
                 const dataCell = document.createElement('td');
-                // 改进raw_data处理，尝试显示更有用的信息
-                try {
-                    if (typeof row.raw_data === 'string') {
-                        try {
-                            // 尝试解析JSON字符串
-                            const parsedData = JSON.parse(row.raw_data);
-                            dataCell.textContent = JSON.stringify(parsedData, null, 2).substring(0, 150) + '...';
-                        } catch (e) {
-                            // 如果解析失败，直接显示字符串
-                            dataCell.textContent = row.raw_data.substring(0, 150) + '...';
-                        }
-                    } else if (row.raw_data) {
-                        dataCell.textContent = JSON.stringify(row.raw_data).substring(0, 150) + '...';
-                    } else {
-                        dataCell.textContent = '无数据';
-                    }
-                } catch (e) {
-                    dataCell.textContent = `[数据显示错误: ${e.message}]`;
+                dataCell.textContent = row.original_value || '无数据';
+                
+                // 为原始值添加样式
+                if (dataCell.textContent === 'null' || 
+                    dataCell.textContent === 'undefined' || 
+                    dataCell.textContent === 'NaN') {
+                    dataCell.style.color = 'var(--warning-color)';
                 }
-
-                // 添加失败原因列
-                const reasonCell = document.createElement('td');
-                reasonCell.textContent = row.reason || '未知原因';
-                reasonCell.style.color = 'var(--error-color)';
 
                 const actionsCell = document.createElement('td');
                 actionsCell.className = 'verification-actions';
@@ -1703,8 +1702,8 @@ async function loadRejectedRows(page = 1) {
 
                 rowEl.appendChild(fileCell);
                 rowEl.appendChild(rowNumberCell);
+                rowEl.appendChild(columnNameCell);
                 rowEl.appendChild(dataCell);
-                rowEl.appendChild(reasonCell); // 添加失败原因列
                 rowEl.appendChild(actionsCell);
 
                 elements.verificationTableBody.appendChild(rowEl);
@@ -1716,7 +1715,7 @@ async function loadRejectedRows(page = 1) {
             console.error('加载被拒绝行失败:', data.message);
             elements.verificationTableBody.innerHTML = `
                 <tr>
-                    <td colspan="4" style="text-align: center; padding: 20px; color: var(--error-color);">
+                    <td colspan="5" style="text-align: center; padding: 20px; color: var(--error-color);">
                         加载被拒绝行失败: ${data.message}
                     </td>
                 </tr>
@@ -1726,7 +1725,7 @@ async function loadRejectedRows(page = 1) {
         console.error('加载被拒绝行失败:', error);
         elements.verificationTableBody.innerHTML = `
             <tr>
-                <td colspan="4" style="text-align: center; padding: 20px; color: var(--error-color);">
+                <td colspan="5" style="text-align: center; padding: 20px; color: var(--error-color);">
                     加载被拒绝行失败: ${error.message}
                 </td>
             </tr>
@@ -1738,48 +1737,181 @@ async function loadRejectedRows(page = 1) {
 function openRowEditor(row) {
     currentRejectedRow = row;
 
-    elements.rowSourceFile.textContent = row.source_file;
-    elements.rowNumber.textContent = row.row_number;
+    // 显示基本信息
+    elements.rowSourceFile.textContent = row.source_file || '';
+    elements.rowNumber.textContent = row.row_number || '';
 
-    // Generate fields based on template
+    // 清空已有字段
     elements.rowEditorFields.innerHTML = '';
 
-    const template = templates[currentTemplate];
-    const rawData = typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data;
-
-    for (const field in template) {
-        const fieldEl = document.createElement('div');
-        fieldEl.className = 'row-editor-field';
-
-        const labelEl = document.createElement('label');
-        labelEl.textContent = field;
-
-        const inputEl = document.createElement('input');
-        inputEl.type = 'text';
-        inputEl.name = field;
-
-        // Try to find matching value in raw data
-        let bestMatch = '';
-        let bestSimilarity = 0;
-
-        for (const key in rawData) {
-            const similarity = stringSimilarity(key, field);
-
-            if (similarity > bestSimilarity) {
-                bestSimilarity = similarity;
-                bestMatch = rawData[key];
+    // 确定列名和目标列
+    const columnName = row.column_name || '未知列';
+    let targetColumn = row.target_column || '';
+    
+    // 如果没有目标列，根据列名猜测
+    if (!targetColumn && columnName !== '未知列') {
+        // 根据列名智能映射到标准字段
+        const standardFields = {
+            '交易时间': '记账时间',
+            '交易日期': '记账日期',
+            '客户账号': '账号',
+            '客户名称': '账户名', 
+            '金额': '交易金额',
+            '账户余额': '余额'
+        };
+        
+        // 简单匹配
+        targetColumn = standardFields[columnName] || '';
+        
+        // 更复杂的匹配逻辑 - 如果没有直接匹配，尝试部分匹配
+        if (!targetColumn) {
+            // 从标准模板中查找最佳匹配
+            const template = templates[currentTemplate];
+            if (template) {
+                for (const field in template) {
+                    // 检查列名是否是标准字段的同义词
+                    if (template[field].synonyms.includes(columnName)) {
+                        targetColumn = field;
+                        break;
+                    }
+                }
+            }
+            
+            // 如果仍未找到，根据关键词猜测
+            if (!targetColumn) {
+                if (columnName.includes('时间')) targetColumn = '记账时间';
+                else if (columnName.includes('日期')) targetColumn = '记账日期';
+                else if (columnName.includes('账号') || columnName.includes('帐号')) targetColumn = '账号';
+                else if (columnName.includes('名') || columnName.includes('户名')) targetColumn = '账户名';
+                else if (columnName.includes('金额') || columnName.includes('发生额')) targetColumn = '交易金额';
+                else if (columnName.includes('余额')) targetColumn = '余额';
             }
         }
-
-        if (bestSimilarity > 0.6 && bestMatch) {
-            inputEl.value = bestMatch;
-        }
-
-        fieldEl.appendChild(labelEl);
-        fieldEl.appendChild(inputEl);
-
-        elements.rowEditorFields.appendChild(fieldEl);
     }
+    
+    // 原始值
+    const originalValue = row.original_value || '';
+    
+    // 错误原因
+    const errorReason = row.reason || '未知错误';
+
+    // 创建字段编辑框
+    const fieldEl = document.createElement('div');
+    fieldEl.className = 'row-editor-field';
+
+    // 显示列名作为标签
+    const labelEl = document.createElement('label');
+    labelEl.textContent = `${columnName} ${targetColumn ? `(映射到: ${targetColumn})` : ''}`;
+    
+    // 说明字段
+    const descriptionEl = document.createElement('p');
+    descriptionEl.className = 'help-text';
+    descriptionEl.textContent = `错误原因: ${errorReason}`;
+    
+    // 原始值显示
+    const originalValueEl = document.createElement('div');
+    originalValueEl.className = 'original-value';
+    originalValueEl.innerHTML = `<strong>原始值:</strong> <span>${originalValue || '无'}</span>`;
+    originalValueEl.style.marginBottom = '16px';
+    originalValueEl.style.padding = '8px';
+    originalValueEl.style.backgroundColor = '#f5f5f7';
+    originalValueEl.style.borderRadius = '8px';
+
+    // 确定字段类型，为编辑提供合适的输入控件
+    let fieldType = 'text'; // 默认类型
+    
+    // 根据目标列确定类型
+    if (targetColumn) {
+        const template = templates[currentTemplate];
+        if (template && template[targetColumn]) {
+            fieldType = template[targetColumn].type;
+        }
+    }
+    
+    // 创建适合字段类型的输入控件
+    let inputEl;
+    if (fieldType === 'date') {
+        inputEl = document.createElement('input');
+        inputEl.type = 'date';
+        inputEl.className = 'edit-field';
+        inputEl.name = targetColumn || columnName;
+        
+        // 尝试将多种日期格式转换为标准格式
+        if (originalValue) {
+            // 尝试转换YYYYMMDD格式
+            if (originalValue.length === 8 && !isNaN(originalValue)) {
+                try {
+                    const year = originalValue.substr(0, 4);
+                    const month = originalValue.substr(4, 2);
+                    const day = originalValue.substr(6, 2);
+                    inputEl.value = `${year}-${month}-${day}`;
+                } catch(e) {}
+            }
+        }
+        
+        inputEl.placeholder = '格式: YYYY-MM-DD';
+    } 
+    else if (fieldType === 'time') {
+        inputEl = document.createElement('input');
+        inputEl.type = 'time';
+        inputEl.step = '1'; // 允许秒
+        inputEl.className = 'edit-field';
+        inputEl.name = targetColumn || columnName;
+        
+        // 尝试将多种时间格式转换为标准格式
+        if (originalValue) {
+            // 尝试转换HHMMSS格式
+            if (originalValue.length === 6 && !isNaN(originalValue)) {
+                try {
+                    const hour = originalValue.substr(0, 2);
+                    const minute = originalValue.substr(2, 2);
+                    const second = originalValue.substr(4, 2);
+                    inputEl.value = `${hour}:${minute}:${second}`;
+                } catch(e) {}
+            }
+        }
+        
+        inputEl.placeholder = '格式: HH:MM:SS';
+    } 
+    else if (fieldType === 'float' || fieldType === 'int') {
+        inputEl = document.createElement('input');
+        inputEl.type = 'number';
+        inputEl.className = 'edit-field';
+        inputEl.name = targetColumn || columnName;
+        
+        if (fieldType === 'float') {
+            inputEl.step = '0.01';
+        } else {
+            inputEl.step = '1';
+        }
+        
+        // 清理原始值中的非数字字符
+        if (originalValue) {
+            const numericValue = originalValue.replace(/[^\d.-]/g, '');
+            if (numericValue && !isNaN(numericValue)) {
+                inputEl.value = numericValue;
+            }
+        }
+        
+        inputEl.placeholder = fieldType === 'float' ? '请输入数字(可包含小数)' : '请输入整数';
+    } 
+    else {
+        // 默认文本输入
+        inputEl = document.createElement('input');
+        inputEl.type = 'text';
+        inputEl.className = 'edit-field';
+        inputEl.name = targetColumn || columnName;
+        inputEl.value = originalValue || '';
+        inputEl.placeholder = `请输入正确的${targetColumn || columnName}值`;
+    }
+
+    // 将元素添加到字段容器
+    fieldEl.appendChild(labelEl);
+    fieldEl.appendChild(descriptionEl);
+    fieldEl.appendChild(originalValueEl);
+    fieldEl.appendChild(inputEl);
+
+    elements.rowEditorFields.appendChild(fieldEl);
 
     openModal('rowEditorModal');
 }
@@ -1812,21 +1944,53 @@ function stringSimilarity(str1, str2) {
 }
 
 // Save a manually fixed rejected row
+// Save a manually fixed rejected row
 async function saveRejectedRow() {
     if (!currentRejectedRow) return;
 
-    const fixedData = {};
-
-    // Get all field values
-    elements.rowEditorFields.querySelectorAll('input').forEach(input => {
-        fixedData[input.name] = input.value;
-    });
-
-    // Add metadata
-    fixedData.source_file = currentRejectedRow.source_file;
-    fixedData.row_number = currentRejectedRow.row_number;
-
+    // 获取编辑后的值
+    const editField = elements.rowEditorFields.querySelector('.edit-field');
+    if (!editField) return;
+    
+    // 获取字段值和目标列名
+    const fieldValue = editField.value.trim();
+    const targetColumn = currentRejectedRow.target_column || editField.name;
+    
+    if (!fieldValue) {
+        alert('请输入修正后的值');
+        return;
+    }
+    
+    // 创建只包含必要字段的数据对象
+    const fixedData = {
+        "source_file": currentRejectedRow.source_file,
+        "row_number": currentRejectedRow.row_number
+    };
+    
+    // 添加修改后的字段值
+    fixedData[targetColumn] = fieldValue;
+    
     try {
+        // 首先通过API访问raw_data以获取完整的行数据
+        let rawData = {};
+        try {
+            if (currentRejectedRow.raw_data && typeof currentRejectedRow.raw_data === 'string') {
+                // 尝试解析row_data获取整行数据
+                rawData = JSON.parse(currentRejectedRow.raw_data
+                    .replace(/:\s*NaN\s*,/g, ': "NaN",')
+                    .replace(/:\s*Infinity\s*,/g, ': "Infinity",')
+                    .replace(/:\s*-Infinity\s*,/g, ': "-Infinity",')
+                    .replace(/:\s*NaN\s*}/g, ': "NaN"}')
+                    .replace(/:\s*Infinity\s*}/g, ': "Infinity"}')
+                    .replace(/:\s*-Infinity\s*}/g, ': "-Infinity"}'));
+            } else if (currentRejectedRow.raw_data && typeof currentRejectedRow.raw_data === 'object') {
+                rawData = currentRejectedRow.raw_data;
+            }
+        } catch (e) {
+            console.warn('无法解析raw_data:', e);
+        }
+        
+        // 发送请求保存修改后的行
         const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1844,11 +2008,11 @@ async function saveRejectedRow() {
             closeRowEditor();
             loadRejectedRows();
         } else {
-            alert(`Failed to save row: ${data.message}`);
+            alert(`保存失败: ${data.message}`);
         }
     } catch (error) {
-        console.error('Failed to save row:', error);
-        alert('Failed to save row. Please try again.');
+        console.error('保存失败:', error);
+        alert(`保存失败: ${error.message}`);
     }
 }
 
