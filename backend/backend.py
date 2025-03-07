@@ -13,6 +13,7 @@ from datetime import datetime
 import time
 from io import StringIO
 import traceback
+from simple_date_utils import parse_date
 
 # 增加Flask请求大小限制
 app = Flask(__name__)
@@ -163,7 +164,6 @@ def detect_column_type(series):
     # Otherwise, it's text
     return "text"
 
-
 def convert_value(value, target_type):
     """Convert a value to the target data type"""
     if pd.isna(value):
@@ -179,23 +179,58 @@ def convert_value(value, target_type):
         elif target_type == "float":
             return float(value)
         elif target_type == "date":
-            # Try various date formats
-            for fmt in ('%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%d/%m/%Y', '%Y%m%d'):
-                try:
-                    date_obj = datetime.strptime(value, fmt)
-                    return date_obj.strftime('%Y-%m-%d')
-                except ValueError:
-                    continue
-            # 如果所有日期格式都失败，抛出异常
+            # 使用增强的日期解析功能
+            from simple_date_utils import parse_date
+            parsed_date = parse_date(value)
+            if parsed_date:
+                return parsed_date
+            # 如果解析失败，抛出异常
             raise ValueError(f"无法将值 '{value}' 转换为日期格式")
         elif target_type == "time":
-            # Try various time formats
+            # 先处理特殊的时间格式
+            if re.match(r'^\d{6}$', value):  # 处理HHMMSS格式
+                hh = value[:2]
+                mm = value[2:4]
+                ss = value[4:6]
+                
+                # 验证时分秒的合法性
+                hour = int(hh)
+                minute = int(mm)
+                second = int(ss)
+                
+                if 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59:
+                    return f"{hh}:{mm}:{ss}"
+            
+            # 如果特殊处理失败，尝试标准格式
             for fmt in ('%H:%M:%S', '%H:%M', '%I:%M:%S %p', '%I:%M %p'):
                 try:
                     time_obj = datetime.strptime(value, fmt)
                     return time_obj.strftime('%H:%M:%S')
                 except ValueError:
                     continue
+                
+            # 尝试处理带毫秒的时间格式
+            try:
+                if '.' in value and re.match(r'\d+:\d+:\d+\.\d+', value):
+                    parts = value.split('.')
+                    base_time = datetime.strptime(parts[0], '%H:%M:%S')
+                    return base_time.strftime('%H:%M:%S')
+            except ValueError:
+                pass
+                
+            # 处理Excel数字时间格式（例如0.75表示18:00:00）
+            try:
+                if re.match(r'^\d*\.\d+$', value):  # 只有小数部分
+                    float_val = float(value)
+                    if 0 <= float_val < 1:  # 在合理的时间范围内
+                        total_seconds = int(float_val * 24 * 60 * 60)
+                        hours = total_seconds // 3600
+                        minutes = (total_seconds % 3600) // 60
+                        seconds = total_seconds % 60
+                        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            except ValueError:
+                pass
+                
             # 如果所有时间格式都失败，抛出异常  
             raise ValueError(f"无法将值 '{value}' 转换为时间格式")
         else:

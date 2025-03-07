@@ -1851,6 +1851,7 @@ function openRowEditor(row) {
         
         inputEl.placeholder = '格式: YYYY-MM-DD';
     } 
+    // 在openRowEditor函数中修改时间字段处理部分
     else if (fieldType === 'time') {
         inputEl = document.createElement('input');
         inputEl.type = 'time';
@@ -1858,16 +1859,40 @@ function openRowEditor(row) {
         inputEl.className = 'edit-field';
         inputEl.name = targetColumn || columnName;
         
-        // 尝试将多种时间格式转换为标准格式
+        // 使用增强的时间解析功能
         if (originalValue) {
-            // 尝试转换HHMMSS格式
-            if (originalValue.length === 6 && !isNaN(originalValue)) {
+            const formattedTime = dateFormats.parseTime(originalValue);
+            if (formattedTime) {
+                // HTML time输入元素接受的格式是HH:MM或HH:MM:SS
+                // 我们需要确保它符合这个格式
+                inputEl.value = formattedTime;
+                
+                // 某些浏览器的time输入不支持秒，所以如果设置值失败，尝试只使用小时和分钟
+                if (!inputEl.value && formattedTime.includes(':')) {
+                    const timeParts = formattedTime.split(':');
+                    if (timeParts.length >= 2) {
+                        inputEl.value = `${timeParts[0]}:${timeParts[1]}`;
+                    }
+                }
+            } else {
+                // 如果解析失败，可以尝试一些基本的格式化
                 try {
-                    const hour = originalValue.substr(0, 2);
-                    const minute = originalValue.substr(2, 2);
-                    const second = originalValue.substr(4, 2);
-                    inputEl.value = `${hour}:${minute}:${second}`;
-                } catch(e) {}
+                    // 尝试处理HHMMSS格式
+                    if (originalValue.length === 6 && !isNaN(originalValue)) {
+                        const hour = originalValue.substr(0, 2);
+                        const minute = originalValue.substr(2, 2);
+                        const second = originalValue.substr(4, 2);
+                        inputEl.value = `${hour}:${minute}:${second}`;
+                    }
+                    // 尝试处理HHMM格式
+                    else if (originalValue.length === 4 && !isNaN(originalValue)) {
+                        const hour = originalValue.substr(0, 2);
+                        const minute = originalValue.substr(2, 2);
+                        inputEl.value = `${hour}:${minute}`;
+                    }
+                } catch(e) {
+                    console.warn("时间格式转换失败:", e);
+                }
             }
         }
         
@@ -2687,6 +2712,257 @@ function applyStoredMappings(fileSignatures) {
     // 更新冲突警告
     updateMappingWarnings();
 }
+
+// 日期和时间格式处理对象
+const dateFormats = {
+    // 解析日期格式
+    parseDate: function(value) {
+        if (!value) return null;
+        
+        // 确保是字符串
+        const strValue = String(value).trim();
+        
+        // 处理YYMMDD格式 (例如: 210305)
+        if (/^\d{6}$/.test(strValue)) {
+            const yy = strValue.substring(0, 2);
+            const mm = strValue.substring(2, 4);
+            const dd = strValue.substring(4, 6);
+            
+            // 验证月份和日期的有效性
+            const month = parseInt(mm, 10);
+            const day = parseInt(dd, 10);
+            
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                // 推断世纪
+                const year = parseInt(yy, 10) < 50 ? `20${yy}` : `19${yy}`;
+                return `${year}-${mm}-${dd}`;
+            }
+        }
+        
+        // 处理YYYYMMDD格式 (例如: 20210305)
+        if (/^\d{8}$/.test(strValue)) {
+            const yyyy = strValue.substring(0, 4);
+            const mm = strValue.substring(4, 6);
+            const dd = strValue.substring(6, 8);
+            
+            // 验证月份和日期的有效性
+            const month = parseInt(mm, 10);
+            const day = parseInt(dd, 10);
+            
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                return `${yyyy}-${mm}-${dd}`;
+            }
+        }
+        
+        // 处理标准日期格式
+        const dateRegex = /^(\d{1,4})[-\/\.](\d{1,2})[-\/\.](\d{1,4})$/;
+        const match = strValue.match(dateRegex);
+        if (match) {
+            let [_, part1, part2, part3] = match;
+            let year, month, day;
+            
+            // 判断年份位置
+            if (part1.length === 4) {
+                // 格式为YYYY-MM-DD
+                year = part1;
+                month = part2;
+                day = part3;
+            } else if (part3.length === 4) {
+                // 格式为DD-MM-YYYY
+                day = part1;
+                month = part2;
+                year = part3;
+            } else {
+                // 格式为YY-MM-DD或DD-MM-YY，需要判断
+                if (parseInt(part1, 10) > 31) {
+                    // 第一部分大于31，可能是年份
+                    year = part1.length === 2 ? (parseInt(part1, 10) < 50 ? `20${part1}` : `19${part1}`) : part1;
+                    month = part2;
+                    day = part3;
+                } else if (parseInt(part3, 10) > 31) {
+                    // 第三部分大于31，可能是年份
+                    day = part1;
+                    month = part2;
+                    year = part3.length === 2 ? (parseInt(part3, 10) < 50 ? `20${part3}` : `19${part3}`) : part3;
+                } else {
+                    // 默认假设是YY-MM-DD格式
+                    year = part1.length === 2 ? (parseInt(part1, 10) < 50 ? `20${part1}` : `19${part1}`) : part1;
+                    month = part2;
+                    day = part3;
+                }
+            }
+            
+            // 格式化并验证日期有效性
+            month = parseInt(month, 10);
+            day = parseInt(day, 10);
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        // 处理中文日期格式
+        const chineseMatch = strValue.match(/(\d{2,4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+        if (chineseMatch) {
+            let [_, year, month, day] = chineseMatch;
+            
+            // 处理两位数年份
+            if (year.length === 2) {
+                year = parseInt(year, 10) < 50 ? `20${year}` : `19${year}`;
+            }
+            
+            month = parseInt(month, 10);
+            day = parseInt(day, 10);
+            
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        return null;
+    },
+    
+    // 解析时间格式
+    parseTime: function(value) {
+        if (!value) return null;
+        
+        // 确保是字符串
+        const strValue = String(value).trim();
+        
+        // 处理HHMMSS格式 (例如: 235959)
+        if (/^\d{6}$/.test(strValue)) {
+            const hh = strValue.substring(0, 2);
+            const mm = strValue.substring(2, 4);
+            const ss = strValue.substring(4, 6);
+            
+            // 验证时分秒的合法性
+            const hour = parseInt(hh, 10);
+            const minute = parseInt(mm, 10);
+            const second = parseInt(ss, 10);
+            
+            if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
+                return `${hh}:${mm}:${ss}`;
+            }
+        }
+        
+        // 处理HHMM格式 (例如: 2359)
+        if (/^\d{4}$/.test(strValue)) {
+            const hh = strValue.substring(0, 2);
+            const mm = strValue.substring(2, 4);
+            
+            // 验证时分的合法性
+            const hour = parseInt(hh, 10);
+            const minute = parseInt(mm, 10);
+            
+            if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                return `${hh}:${mm}:00`;
+            }
+        }
+        
+        // 处理标准时间格式
+        const timeRegex = /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?(?:\s*(am|pm))?$/i;
+        const match = strValue.match(timeRegex);
+        if (match) {
+            let [_, hours, minutes, seconds, ampm] = match;
+            hours = parseInt(hours, 10);
+            minutes = parseInt(minutes, 10);
+            seconds = seconds ? parseInt(seconds, 10) : 0;
+            
+            // 处理12小时制
+            if (ampm) {
+                if (ampm.toLowerCase() === 'pm' && hours < 12) {
+                    hours += 12;
+                } else if (ampm.toLowerCase() === 'am' && hours === 12) {
+                    hours = 0;
+                }
+            }
+            
+            // 验证时分秒的合法性
+            if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 59) {
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        // 处理Excel数字时间格式（0.75 = 18:00:00）
+        if (/^\d*\.\d+$/.test(strValue)) {
+            const floatVal = parseFloat(strValue);
+            if (floatVal >= 0 && floatVal < 1) {
+                const totalSeconds = Math.floor(floatVal * 24 * 60 * 60);
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+                
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+        
+        return null;
+    },
+    
+    // 获取支持的日期格式列表
+    getSupportedDateFormats: function() {
+        return [
+            'YYYY-MM-DD (例: 2021-03-05)',
+            'YYYY/MM/DD (例: 2021/03/05)',
+            'DD-MM-YYYY (例: 05-03-2021)',
+            'DD/MM/YYYY (例: 05/03/2021)',
+            'YYYYMMDD (例: 20210305)',
+            'YY-MM-DD (例: 21-03-05)',
+            'YY/MM/DD (例: 21/03/05)',
+            'YYMMDD (例: 210305)',
+            '中文格式 (例: 2021年3月5日)',
+            '以及更多格式...'
+        ];
+    },
+    
+    // 获取支持的时间格式列表
+    getSupportedTimeFormats: function() {
+        return [
+            'HH:MM:SS (例: 13:45:30)',
+            'HH:MM (例: 13:45)',
+            'HHMMSS (例: 134530)',
+            'HHMM (例: 1345)',
+            'H:MM AM/PM (例: 1:45 PM)',
+            'Excel时间数值 (例: 0.75 表示 18:00:00)'
+        ];
+    }
+};
+
+// 更新支持的日期格式列表
+function updateSupportedDateFormats() {
+    const list = document.getElementById('supportedDateFormatsList');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    const formats = dateFormats.getSupportedDateFormats();
+    
+    formats.forEach(format => {
+        const li = document.createElement('li');
+        li.textContent = format;
+        list.appendChild(li);
+    });
+}
+
+// 更新支持的时间格式列表
+function updateSupportedTimeFormats() {
+    const list = document.getElementById('supportedTimeFormatsList');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    const formats = dateFormats.getSupportedTimeFormats();
+    
+    formats.forEach(format => {
+        const li = document.createElement('li');
+        li.textContent = format;
+        list.appendChild(li);
+    });
+}
+
+// 更新所有格式列表
+function updateSupportedFormats() {
+    updateSupportedDateFormats();
+    updateSupportedTimeFormats();
+}
+
 // Open settings modal
 function openSettings() {
     // Update showRecentFiles checkbox
@@ -2694,6 +2970,7 @@ function openSettings() {
 
     // Update templates list
     updateSettingsTemplatesList();
+    updateSupportedFormats();
 
     openModal('settingsModal');
 }

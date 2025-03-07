@@ -1434,3 +1434,64 @@ body {
     border-radius: 4px;
     background-color: rgba(255, 149, 0, 0.1);
 }
+
+/* 日期格式管理样式 */
+.date-formats-container {
+    margin-top: 16px;
+}
+
+.date-formats-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background-color: #fff;
+    padding: 12px;
+    margin-bottom: 16px;
+    list-style: none;
+}
+
+.date-formats-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.date-formats-list li:last-child {
+    border-bottom: none;
+}
+
+.date-format-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.date-format-item:last-child {
+    border-bottom: none;
+}
+
+.date-format-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.input-group {
+    flex: 1;
+    min-width: 200px;
+}
+
+.input-help {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.empty-message {
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 8px 0;
+}
