@@ -1652,6 +1652,7 @@ async function loadRejectedRows(page = 1) {
                         <th>行号</th>
                         <th>列名</th>
                         <th>原始数据</th>
+                        <th>状态</th>
                         <th>操作</th>
                     </tr>
                 `;
@@ -1662,50 +1663,49 @@ async function loadRejectedRows(page = 1) {
 
             data.results.forEach(row => {
                 const rowEl = document.createElement('tr');
-
+            
                 const fileCell = document.createElement('td');
                 fileCell.textContent = row.source_file || '';
-
+            
                 const rowNumberCell = document.createElement('td');
                 rowNumberCell.textContent = row.row_number || '';
-
+            
                 // 添加列名单元格
                 const columnNameCell = document.createElement('td');
                 columnNameCell.textContent = row.column_name || '未知列';
-
+            
                 // 原始数据单元格
                 const dataCell = document.createElement('td');
                 dataCell.textContent = row.original_value || '无数据';
-                
-                // 为原始值添加样式
-                if (dataCell.textContent === 'null' || 
-                    dataCell.textContent === 'undefined' || 
-                    dataCell.textContent === 'NaN') {
-                    dataCell.style.color = 'var(--warning-color)';
-                }
-
+            
+                // 添加状态列
+                const statusCell = document.createElement('td');
+                statusCell.className = 'status-cell';
+                statusCell.innerHTML = '<span class="status-badge status-pending">未修正</span>';
+            
                 const actionsCell = document.createElement('td');
                 actionsCell.className = 'verification-actions';
-
+            
                 const editBtn = document.createElement('button');
                 editBtn.className = 'btn small';
                 editBtn.textContent = '编辑';
                 editBtn.onclick = () => openRowEditor(row);
-
+            
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'btn small danger';
                 deleteBtn.textContent = '删除';
                 deleteBtn.onclick = () => deleteRejectedRowDirect(row.id);
-
+            
                 actionsCell.appendChild(editBtn);
                 actionsCell.appendChild(deleteBtn);
-
+            
                 rowEl.appendChild(fileCell);
                 rowEl.appendChild(rowNumberCell);
                 rowEl.appendChild(columnNameCell);
                 rowEl.appendChild(dataCell);
+                rowEl.appendChild(statusCell);
                 rowEl.appendChild(actionsCell);
-
+            
                 elements.verificationTableBody.appendChild(rowEl);
             });
 
@@ -1973,47 +1973,50 @@ function stringSimilarity(str1, str2) {
 async function saveRejectedRow() {
     if (!currentRejectedRow) return;
 
-    // 获取编辑后的值
-    const editField = elements.rowEditorFields.querySelector('.edit-field');
-    if (!editField) return;
-    
-    // 获取字段值和目标列名
-    const fieldValue = editField.value.trim();
-    const targetColumn = currentRejectedRow.target_column || editField.name;
-    
-    if (!fieldValue) {
-        alert('请输入修正后的值');
-        return;
-    }
-    
-    // 创建只包含必要字段的数据对象
-    const fixedData = {
-        "source_file": currentRejectedRow.source_file,
-        "row_number": currentRejectedRow.row_number
-    };
-    
-    // 添加修改后的字段值
-    fixedData[targetColumn] = fieldValue;
-    
     try {
-        // 首先通过API访问raw_data以获取完整的行数据
-        let rawData = {};
-        try {
-            if (currentRejectedRow.raw_data && typeof currentRejectedRow.raw_data === 'string') {
-                // 尝试解析row_data获取整行数据
-                rawData = JSON.parse(currentRejectedRow.raw_data
-                    .replace(/:\s*NaN\s*,/g, ': "NaN",')
-                    .replace(/:\s*Infinity\s*,/g, ': "Infinity",')
-                    .replace(/:\s*-Infinity\s*,/g, ': "-Infinity",')
-                    .replace(/:\s*NaN\s*}/g, ': "NaN"}')
-                    .replace(/:\s*Infinity\s*}/g, ': "Infinity"}')
-                    .replace(/:\s*-Infinity\s*}/g, ': "-Infinity"}'));
-            } else if (currentRejectedRow.raw_data && typeof currentRejectedRow.raw_data === 'object') {
-                rawData = currentRejectedRow.raw_data;
-            }
-        } catch (e) {
-            console.warn('无法解析raw_data:', e);
+        // 获取所有编辑字段，而不仅仅是第一个
+        const editFields = elements.rowEditorFields.querySelectorAll('.edit-field');
+        if (!editFields || editFields.length === 0) {
+            alert('未找到可编辑字段');
+            return;
         }
+        
+        // 创建全新的数据对象
+        const fixedData = {};
+        
+        // 添加基本信息
+        fixedData["source_file"] = String(currentRejectedRow.source_file || '');
+        fixedData["row_number"] = parseInt(currentRejectedRow.row_number || 0, 10);
+        
+        // 收集所有修改后的字段值
+        let hasValues = false;
+        editFields.forEach(field => {
+            if (!field.name) return;
+            
+            const fieldValue = field.value.trim();
+            if (fieldValue) {
+                // 根据字段类型进行适当的转换
+                if (field.type === 'number') {
+                    // 对数值进行处理
+                    if (field.step === '1') {
+                        fixedData[field.name] = parseInt(fieldValue, 10);
+                    } else {
+                        fixedData[field.name] = parseFloat(fieldValue);
+                    }
+                } else {
+                    // 文本、日期、时间等保持字符串形式
+                    fixedData[field.name] = fieldValue;
+                }
+                hasValues = true;
+            }
+        });
+        
+        if (!hasValues) {
+            alert('请至少输入一个值');
+            return;
+        }
+        
+        console.log('发送更新数据:', fixedData);
         
         // 发送请求保存修改后的行
         const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
@@ -2023,15 +2026,36 @@ async function saveRejectedRow() {
                 db_path: currentDatabase,
                 row_id: currentRejectedRow.id,
                 fixed_data: fixedData,
-                action: 'save'
+                action: 'save',
+                template_name: currentTemplate // 添加当前模板名称
             })
         });
 
         const data = await response.json();
 
         if (data.status === 'success') {
+            // 找到这一行并更新状态
+            const rowElements = document.querySelectorAll('#verificationTableBody tr');
+            for (const rowEl of rowElements) {
+                const fileCell = rowEl.querySelector('td:first-child');
+                const rowNumCell = rowEl.querySelector('td:nth-child(2)');
+                
+                if (fileCell && rowNumCell && 
+                    fileCell.textContent.trim() === currentRejectedRow.source_file &&
+                    rowNumCell.textContent.trim() == currentRejectedRow.row_number) {
+                    
+                    const statusCell = rowEl.querySelector('.status-cell');
+                    if (statusCell) {
+                        statusCell.innerHTML = '<span class="status-badge status-fixed">已修正</span>';
+                    }
+                    break;
+                }
+            }
+            
+            // 关闭编辑器
             closeRowEditor();
-            loadRejectedRows();
+            // 不刷新整个列表，以保留状态显示
+            // loadRejectedRows();
         } else {
             alert(`保存失败: ${data.message}`);
         }
@@ -2104,9 +2128,11 @@ function createPagination(totalCount, currentPage, pageSize, container, callback
 
 // 修改 finishProcessing 函数
 async function finishProcessing() {
-    // 检查是否还有未处理的行
-    if (document.querySelectorAll('#verificationTableBody tr').length > 0) {
-        const continueAnyway = await showDynamicConfirm('仍有未处理的行，确定要完成处理吗？未处理的行将不会导入到数据库中。', '完成处理确认');
+    // 检查是否还有未处理的行 - 修正后的逻辑
+    const remainingRows = document.querySelectorAll('#verificationTableBody .status-badge.status-pending');
+    
+    if (remainingRows.length > 0) {
+        const continueAnyway = await showDynamicConfirm(`仍有 ${remainingRows.length} 行未处理，确定要完成处理吗？未处理的行将不会导入到数据库中。`, '完成处理确认');
         if (!continueAnyway) {
             return;
         }

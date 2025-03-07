@@ -1495,3 +1495,22 @@ body {
     text-align: center;
     padding: 8px 0;
 }
+
+/* 添加到styles.css */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-pending {
+    background-color: #FFF3E0;
+    color: #FF9800;
+}
+
+.status-fixed {
+    background-color: #E8F5E9;
+    color: #4CAF50;
+}

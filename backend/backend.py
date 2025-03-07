@@ -187,51 +187,12 @@ def convert_value(value, target_type):
             # 如果解析失败，抛出异常
             raise ValueError(f"无法将值 '{value}' 转换为日期格式")
         elif target_type == "time":
-            # 先处理特殊的时间格式
-            if re.match(r'^\d{6}$', value):  # 处理HHMMSS格式
-                hh = value[:2]
-                mm = value[2:4]
-                ss = value[4:6]
-                
-                # 验证时分秒的合法性
-                hour = int(hh)
-                minute = int(mm)
-                second = int(ss)
-                
-                if 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59:
-                    return f"{hh}:{mm}:{ss}"
-            
-            # 如果特殊处理失败，尝试标准格式
-            for fmt in ('%H:%M:%S', '%H:%M', '%I:%M:%S %p', '%I:%M %p'):
-                try:
-                    time_obj = datetime.strptime(value, fmt)
-                    return time_obj.strftime('%H:%M:%S')
-                except ValueError:
-                    continue
-                
-            # 尝试处理带毫秒的时间格式
-            try:
-                if '.' in value and re.match(r'\d+:\d+:\d+\.\d+', value):
-                    parts = value.split('.')
-                    base_time = datetime.strptime(parts[0], '%H:%M:%S')
-                    return base_time.strftime('%H:%M:%S')
-            except ValueError:
-                pass
-                
-            # 处理Excel数字时间格式（例如0.75表示18:00:00）
-            try:
-                if re.match(r'^\d*\.\d+$', value):  # 只有小数部分
-                    float_val = float(value)
-                    if 0 <= float_val < 1:  # 在合理的时间范围内
-                        total_seconds = int(float_val * 24 * 60 * 60)
-                        hours = total_seconds // 3600
-                        minutes = (total_seconds % 3600) // 60
-                        seconds = total_seconds % 60
-                        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            except ValueError:
-                pass
-                
-            # 如果所有时间格式都失败，抛出异常  
+            # 使用增强的时间解析功能
+            from simple_date_utils import parse_time
+            parsed_time = parse_time(value)
+            if parsed_time:
+                return parsed_time
+            # 如果解析失败，抛出异常
             raise ValueError(f"无法将值 '{value}' 转换为时间格式")
         else:
             return value
@@ -997,10 +958,13 @@ def get_rejected_rows():
 def process_rejected_row():
     """Process a manually fixed rejected row"""
     data = request.json
+    print(f"接收到处理请求: {data}", file=sys.stderr, flush=True)
+    
     db_path = data.get('db_path')
     row_id = data.get('row_id')
     fixed_data = data.get('fixed_data', {})
     action = data.get('action', 'save')  # 'save' or 'delete'
+    template_name = data.get('template_name')  # 获取前端传入的模板名称
 
     if not db_path or row_id is None:
         return jsonify({"status": "error", "message": "Missing database path or row ID"}), 400
@@ -1022,13 +986,35 @@ def process_rejected_row():
 
             # 从SQLite结果创建字典
             row_dict = {}
-            cursor.description = cursor.description or []
-            for i, col in enumerate(cursor.description):
+            description = cursor.description or []
+            for i, col in enumerate(description):
                 row_dict[col[0]] = row[i]
             
             # 获取原始行号和文件
             source_file = fixed_data.get("source_file") or row_dict.get("source_file")
             row_number = fixed_data.get("row_number") or row_dict.get("row_number")
+            
+            # 获取原始数据作为JSON
+            raw_data_str = row_dict.get('raw_data')
+            original_data = {}
+            
+            try:
+                if raw_data_str:
+                    # 预处理可能导致问题的值
+                    if isinstance(raw_data_str, str):
+                        raw_data_str = (raw_data_str
+                            .replace(': NaN,', ': "NaN",')
+                            .replace(': Infinity,', ': "Infinity",')
+                            .replace(': -Infinity,', ': "-Infinity",')
+                            .replace(': NaN}', ': "NaN"}')
+                            .replace(': Infinity}', ': "Infinity"}')
+                            .replace(': -Infinity}', ': "-Infinity"}'))
+                    
+                    # 解析原始数据
+                    original_data = json.loads(raw_data_str)
+                    print(f"成功解析原始数据: {len(original_data)}", file=sys.stderr, flush=True)
+            except Exception as e:
+                print(f"解析原始数据失败: {str(e)}", file=sys.stderr, flush=True)
             
             # 查找是否已存在这个行的数据
             cursor.execute(
@@ -1049,23 +1035,152 @@ def process_rejected_row():
                         (value, source_file, row_number)
                     )
             else:
-                # 如果不存在，插入新行
-                columns = list(fixed_data.keys())
-                placeholders = ", ".join(["?" for _ in columns])
-                values = [fixed_data[col] for col in columns]
+                # 获取合适的模板
+                current_template = {}
                 
-                # 确保必要的元数据字段存在
-                if "source_file" not in fixed_data:
-                    columns.append("source_file")
-                    values.append(source_file)
-                if "row_number" not in fixed_data:
-                    columns.append("row_number")
-                    values.append(row_number)
+                # 尝试使用前端传入的模板名称
+                if template_name and template_name in templates:
+                    current_template = templates[template_name]
+                    print(f"使用前端指定模板: {template_name}", file=sys.stderr, flush=True)
+                # 否则使用默认模板
+                elif default_template and default_template in templates:
+                    current_template = templates[default_template]
+                    print(f"使用默认模板: {default_template}", file=sys.stderr, flush=True)
+                # 如果以上都失败，使用第一个可用模板
+                elif templates:
+                    first_template_name = next(iter(templates))
+                    current_template = templates[first_template_name]
+                    print(f"使用第一个可用模板: {first_template_name}", file=sys.stderr, flush=True)
+                else:
+                    print("警告: 没有可用模板", file=sys.stderr, flush=True)
                 
-                cursor.execute(
-                    f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({', '.join(['?' for _ in values])})",
-                    values
-                )
+                # 如果不存在，需要创建完整的行数据
+                full_data = {}
+                
+                # 1. 首先从模板获取所有可能的字段
+                template_fields = []
+                for template in templates.values():
+                    template_fields.extend(list(template.keys()))
+                template_fields = list(set(template_fields))  # 去重
+                
+                # 2. 从原始数据中提取值
+                all_columns = []
+                all_values = []
+                
+                # 添加基本标识字段
+                all_columns.append("source_file")
+                all_values.append(source_file)
+                all_columns.append("row_number")
+                all_values.append(row_number)
+                
+                # 从原始数据中提取值
+                target_column = row_dict.get('target_column')
+                column_name = row_dict.get('column_name')
+                if target_column and column_name and column_name in original_data:
+                    # 这是我们要修复的字段的原始值
+                    original_value = original_data.get(column_name)
+                    
+                    # 对原始数据中的所有字段进行转换
+                    for orig_col, value in original_data.items():
+                        # 跳过我们要修复的字段（将使用fixed_data中的值）
+                        if orig_col == column_name:
+                            continue
+                            
+                        # 为每个字段查找对应的目标列
+                        mapped_column = None
+                        best_similarity = 0
+                        
+                        for field_name, field_info in current_template.items():
+                            # 检查是否是同义词
+                            if orig_col in field_info.get('synonyms', []) or orig_col == field_name:
+                                mapped_column = field_name
+                                break
+                            
+                            # 计算字符串相似度
+                            similarity = difflib.SequenceMatcher(None, orig_col, field_name).ratio()
+                            for synonym in field_info.get('synonyms', []):
+                                syn_similarity = difflib.SequenceMatcher(None, orig_col, synonym).ratio()
+                                similarity = max(similarity, syn_similarity)
+                                
+                            if similarity > best_similarity and similarity > 0.6:
+                                best_similarity = similarity
+                                mapped_column = field_name
+                                
+                        # 如果找到了映射字段，尝试转换并添加
+                        if mapped_column:
+                            try:
+                                # 获取目标类型
+                                target_type = "text"  # 默认
+                                for t_name, t_info in templates.items():
+                                    if mapped_column in t_info:
+                                        target_type = t_info[mapped_column]["type"]
+                                        break
+                                        
+                                # 尝试转换值
+                                converted_value = convert_value(value, target_type)
+                                if converted_value is not None:
+                                    all_columns.append(mapped_column)
+                                    all_values.append(converted_value)
+                            except Exception as e:
+                                print(f"转换字段 {orig_col} 失败: {str(e)}", file=sys.stderr, flush=True)
+                
+                # 3. 添加用户修改的字段值
+                for field, value in fixed_data.items():
+                    if field in ["source_file", "row_number"]:
+                        continue  # 已添加
+                        
+                    # 检查是否已存在该字段，如果存在则更新值，否则添加
+                    if field in all_columns:
+                        idx = all_columns.index(field)
+                        all_values[idx] = value
+                    else:
+                        all_columns.append(field)
+                        all_values.append(value)
+                
+                # 4. 插入完整的行数据
+                if all_columns:
+                    placeholders = ", ".join(["?" for _ in all_columns])
+                    try:
+                        cursor.execute(
+                            f"INSERT INTO transactions ({', '.join(all_columns)}) VALUES ({placeholders})",
+                            all_values
+                        )
+                        print(f"成功插入完整行数据: 字段={all_columns}, 值={all_values}", file=sys.stderr, flush=True)
+                    except sqlite3.Error as e:
+                        print(f"插入完整行数据失败: {str(e)}", file=sys.stderr, flush=True)
+                        # 回退到只插入修改的字段
+                        columns = list(fixed_data.keys())
+                        values = [fixed_data[col] for col in columns]
+                        if "source_file" not in fixed_data:
+                            columns.append("source_file")
+                            values.append(source_file)
+                        if "row_number" not in fixed_data:
+                            columns.append("row_number")
+                            values.append(row_number)
+                        
+                        placeholders = ", ".join(["?" for _ in columns])
+                        cursor.execute(
+                            f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
+                            values
+                        )
+                        print(f"回退方案: 仅插入修改字段: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
+                else:
+                    # 使用原来的方式作为备选
+                    columns = list(fixed_data.keys())
+                    values = [fixed_data[col] for col in columns]
+                    if "source_file" not in fixed_data:
+                        columns.append("source_file")
+                        values.append(source_file)
+                    if "row_number" not in fixed_data:
+                        columns.append("row_number")
+                        values.append(row_number)
+                    
+                    placeholders = ", ".join(["?" for _ in columns])
+                    cursor.execute(
+                        f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
+                        values
+                    )
+                    print(f"备选方案: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
 
             # Delete the rejected row
             cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
@@ -1078,7 +1193,9 @@ def process_rejected_row():
             "message": f"Rejected row {row_id} processed successfully"
         })
     except Exception as e:
-        print(f"处理拒绝行失败: {str(e)}", file=sys.stderr, flush=True)
+        print(f"处理拒绝行失败详细信息: {str(e)}", file=sys.stderr, flush=True)
+        print(f"数据类型: {type(data.get('fixed_data'))}", file=sys.stderr, flush=True)
+        print(f"完整数据: {data}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
         return jsonify({"status": "error", "message": str(e)}), 500
 
