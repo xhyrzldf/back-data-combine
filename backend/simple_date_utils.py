@@ -110,6 +110,24 @@ def parse_time(value):
                 return f"{hh}:{mm}:00"
         except ValueError:
             pass
+
+    # 处理5位数格式 (例如: 22805 表示 02:28:05)
+    if re.match(r'^\d{5}$', value):
+        # 处理5位数时间格式
+        if len(value) == 5:
+            h = value[0]       # 第一位是小时
+            mm = value[1:3]    # 第2-3位是分钟
+            ss = value[3:5]    # 第4-5位是秒钟
+            
+            try:
+                # 合法性检查
+                hour = int(h)
+                minute = int(mm)
+                second = int(ss)
+                if 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59:
+                    return f"0{h}:{mm}:{ss}"
+            except ValueError:
+                pass
     
     # 处理标准格式
     for fmt in ('%H:%M:%S', '%H:%M', '%I:%M:%S %p', '%I:%M %p'):

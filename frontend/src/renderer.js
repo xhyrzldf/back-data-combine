@@ -2843,6 +2843,22 @@ const dateFormats = {
                 return `${hh}:${mm}:${ss}`;
             }
         }
+
+        // 处理5位数HMMSS格式 (例如: 22805 表示 02:28:05)
+        if (/^\d{5}$/.test(strValue)) {
+            const h = strValue.substring(0, 1);
+            const mm = strValue.substring(1, 3);
+            const ss = strValue.substring(3, 5);
+            
+            // 验证时分秒的合法性
+            const hour = parseInt(h, 10);
+            const minute = parseInt(mm, 10);
+            const second = parseInt(ss, 10);
+            
+            if (hour >= 0 && hour <= 9 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
+                return `0${h}:${mm}:${ss}`;
+            }
+        }
         
         // 处理HHMM格式 (例如: 2359)
         if (/^\d{4}$/.test(strValue)) {
