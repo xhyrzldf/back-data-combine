@@ -184,8 +184,8 @@ def convert_value(value, target_type):
                     return date_obj.strftime('%Y-%m-%d')
                 except ValueError:
                     continue
-            # If no format worked, return as is
-            return value
+            # 如果所有日期格式都失败，抛出异常
+            raise ValueError(f"无法将值 '{value}' 转换为日期格式")
         elif target_type == "time":
             # Try various time formats
             for fmt in ('%H:%M:%S', '%H:%M', '%I:%M:%S %p', '%I:%M %p'):
@@ -194,14 +194,13 @@ def convert_value(value, target_type):
                     return time_obj.strftime('%H:%M:%S')
                 except ValueError:
                     continue
-            # If no format worked, return as is
-            return value
+            # 如果所有时间格式都失败，抛出异常  
+            raise ValueError(f"无法将值 '{value}' 转换为时间格式")
         else:
             return value
-    except:
-        # If conversion fails, return as is
-        return value
-
+    except Exception as e:
+        # 转换失败时抛出异常，而不是返回原始值
+        raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
 
 # API Routes
 @app.route('/api/ping', methods=['GET'])
@@ -363,6 +362,8 @@ def process_files():
                             
                             # 逐块读取处理
                             skip_rows = 1  # 跳过标题行
+                            total_rejected = 0  # 追踪被拒绝的行总数
+                            
                             while True:
                                 try:
                                     chunk_df = pd.read_excel(
@@ -381,22 +382,44 @@ def process_files():
                                         chunk_df, file_path, skip_rows-1, column_mappings
                                     )
                                     
-                                    all_mapped_data.extend(chunk_results["mapped_data"])
-                                    all_rejected_rows.extend(chunk_results["rejected_rows"])
+                                    # 确保结果包含正确的键
+                                    if "mapped_data" not in chunk_results or "rejected_rows" not in chunk_results:
+                                        print(f"警告: process_dataframe_chunk返回格式不正确", file=sys.stderr, flush=True)
+                                        if isinstance(chunk_results, dict):
+                                            print(f"结果包含的键: {list(chunk_results.keys())}", file=sys.stderr, flush=True)
+                                        else:
+                                            print(f"结果类型: {type(chunk_results)}", file=sys.stderr, flush=True)
+                                        continue
+                                    
+                                    current_mapped = chunk_results.get("mapped_data", [])
+                                    current_rejected = chunk_results.get("rejected_rows", [])
+                                    
+                                    # 打印当前块的结果统计
+                                    print(f"块 {chunks_processed+1}: 映射行数={len(current_mapped)}, 拒绝行数={len(current_rejected)}", 
+                                        file=sys.stderr, flush=True)
+                                    
+                                    all_mapped_data.extend(current_mapped)
+                                    all_rejected_rows.extend(current_rejected)
+                                    total_rejected += len(current_rejected)
                                     
                                     # 每处理5个块提交一次事务
                                     chunks_processed += 1
                                     if chunks_processed % 5 == 0:
                                         # 插入已处理的数据
-                                        insert_data_to_db(conn, cursor, all_mapped_data, all_rejected_rows)
+                                        if all_mapped_data or all_rejected_rows:
+                                            print(f"提交数据块: 映射行={len(all_mapped_data)}, 拒绝行={len(all_rejected_rows)}", 
+                                                file=sys.stderr, flush=True)
+                                            insert_data_to_db(conn, cursor, all_mapped_data, all_rejected_rows)
+                                            conn.commit()
+                                        
+                                        # 清空临时列表以释放内存
                                         all_mapped_data = []
                                         all_rejected_rows = []
-                                        conn.commit()
                                         
                                         # 报告进度
                                         rows_processed = skip_rows + len(chunk_df) - 1
                                         print(f"已处理: {rows_processed} 行 ({chunks_processed} 块)", 
-                                              file=sys.stderr, flush=True)
+                                            file=sys.stderr, flush=True)
                                     
                                     # 更新下一块的起始行
                                     skip_rows += len(chunk_df)
@@ -411,18 +434,22 @@ def process_files():
                             
                             # 处理剩余数据
                             if all_mapped_data or all_rejected_rows:
+                                print(f"提交最终数据块: 映射行={len(all_mapped_data)}, 拒绝行={len(all_rejected_rows)}", 
+                                    file=sys.stderr, flush=True)
                                 insert_data_to_db(conn, cursor, all_mapped_data, all_rejected_rows)
+                                conn.commit()
                             
                             # 构建文件处理统计
                             total_rows = skip_rows - 1
-                            processed_rows = len(all_mapped_data)
-                            rejected_rows = len(all_rejected_rows)
+                            processed_rows = total_rows - total_rejected
+                            rejected_rows = total_rejected
                             
+                            print(f"大文件处理完成. 总行数: {total_rows}, 处理行数: {processed_rows}, 拒绝行数: {rejected_rows}", 
+                                file=sys.stderr, flush=True)
                         except Exception as big_file_error:
                             print(f"大文件处理失败: {str(big_file_error)}", file=sys.stderr, flush=True)
                             traceback.print_exc(file=sys.stderr)
                             raise big_file_error
-                            
                     else:
                         # 小文件直接处理
                         df = pd.read_excel(file_path)
@@ -563,6 +590,9 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
             }
 
             has_data = False
+            row_has_errors = False  # 新增：标记该行是否有转换错误
+            error_msgs = []  # 新增：收集错误信息
+            
             for orig_col, target_col in file_mapping.items():
                 if orig_col in df.columns and target_col:
                     try:
@@ -580,21 +610,40 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                         # 转换数据类型
                         mapped_row[target_col] = convert_value(value, target_type)
                     except Exception as conv_error:
-                        print(f"转换错误 行 {row_number}, 列 {orig_col}: {str(conv_error)}", 
-                              file=sys.stderr, flush=True)
-                        # 使用默认值继续
+                        error_msg = f"转换错误 行 {row_number}, 列 {orig_col}: {str(conv_error)}"
+                        print(error_msg, file=sys.stderr, flush=True)
+                        error_msgs.append(error_msg)
+                        row_has_errors = True  # 标记该行存在错误
+                        # 仍然设置为空值，以防万一检验条件失败
                         mapped_row[target_col] = None
 
             # 跳过空行
             if not has_data:
                 continue
 
-            mapped_data.append(mapped_row)
+            # 如果行有转换错误，将其添加到被拒绝的行列表
+            if row_has_errors:
+                try:
+                    row_dict = row.to_dict()
+                    row_json = json.dumps(row_dict, default=str)
+                except:
+                    row_json = str(row)
+                
+                rejected_rows.append({
+                    "source_file": file_name,
+                    "row_number": row_number,
+                    "raw_data": row_json,
+                    "reason": "; ".join(error_msgs)  # 将所有错误消息合并
+                })
+            else:
+                # 只有没有错误的行才添加到映射数据
+                mapped_data.append(mapped_row)
+                
         except Exception as row_error:
-            # 添加到被拒绝的行
+            # 添加到被拒绝的行（处理整行的其他错误）
             try:
                 row_dict = row.to_dict()
-                row_json = json.dumps(row_dict, default=str)  # 使用default=str处理非JSON序列化对象
+                row_json = json.dumps(row_dict, default=str)
             except:
                 row_json = str(row)
                 
@@ -607,13 +656,12 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
     
     return {"mapped_data": mapped_data, "rejected_rows": rejected_rows}
 
-
 # 辅助函数：将数据插入数据库
 def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
     """将映射数据和被拒绝的行插入数据库"""
     try:
         # 插入映射数据
-        if mapped_data:
+        if mapped_data and len(mapped_data) > 0:
             columns = list(mapped_data[0].keys())
             placeholders = ", ".join(["?" for _ in columns])
             insert_query = f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})"
@@ -627,23 +675,51 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
                     # 继续处理其他行
                     continue
 
-        # 插入被拒绝的行
-        if rejected_rows:
+        # 插入被拒绝的行 - 关键修改部分
+        if rejected_rows and len(rejected_rows) > 0:
+            print(f"正在插入 {len(rejected_rows)} 条被拒绝的行...", file=sys.stderr, flush=True)
+            
             for row in rejected_rows:
+                # 确保raw_data是字符串
+                if isinstance(row["raw_data"], dict) or isinstance(row["raw_data"], list):
+                    try:
+                        row["raw_data"] = json.dumps(row["raw_data"], default=str)
+                    except Exception as e:
+                        print(f"序列化raw_data失败: {str(e)}", file=sys.stderr, flush=True)
+                        row["raw_data"] = str(row["raw_data"])
+                
                 try:
+                    # 使用参数化查询避免SQL注入
                     cursor.execute(
                         "INSERT INTO rejected_rows (source_file, row_number, raw_data, reason) VALUES (?, ?, ?, ?)",
                         (row["source_file"], row["row_number"], row["raw_data"], row["reason"])
                     )
+                    
+                    # 检查是否真的插入了数据
+                    if cursor.rowcount == 0:
+                        print(f"警告: 行似乎未被插入. 源文件: {row['source_file']}, 行号: {row['row_number']}", 
+                              file=sys.stderr, flush=True)
                 except sqlite3.Error as sql_error:
                     print(f"SQL错误(插入被拒绝行): {str(sql_error)}", file=sys.stderr, flush=True)
+                    print(f"问题数据: {row}", file=sys.stderr, flush=True)
                     # 继续处理其他行
                     continue
+                except Exception as e:
+                    print(f"插入被拒绝行时发生未知错误: {str(e)}", file=sys.stderr, flush=True)
+                    print(f"问题数据: {row}", file=sys.stderr, flush=True)
+                    continue
+            
+            # 执行一次手动提交确保数据被写入
+            try:
+                conn.commit()
+                print(f"被拒绝的行已提交到数据库", file=sys.stderr, flush=True)
+            except sqlite3.Error as commit_error:
+                print(f"提交被拒绝行时发生错误: {str(commit_error)}", file=sys.stderr, flush=True)
+                
     except Exception as e:
         print(f"插入数据错误: {str(e)}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
         # 继续，不要中断整个处理
-
 
 @app.route('/api/query-database', methods=['POST'])
 def query_database():
@@ -746,25 +822,52 @@ def get_rejected_rows():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Get total count
+        # 增加调试信息
+        print(f"查询被拒绝行：数据库={db_path}, 页码={page}, 每页={page_size}", file=sys.stderr, flush=True)
+        
+        # 检查表是否存在
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rejected_rows'")
+        if not cursor.fetchone():
+            print("错误: rejected_rows表不存在!", file=sys.stderr, flush=True)
+            return jsonify({
+                "status": "error", 
+                "message": "rejected_rows表不存在，可能数据库结构有问题"
+            }), 500
+
+        # 直接检查表中数据
         cursor.execute("SELECT COUNT(*) FROM rejected_rows")
-        total_count = cursor.fetchone()[0]
+        total_count_result = cursor.fetchone()
+        if not total_count_result:
+            print("警告: COUNT查询未返回结果", file=sys.stderr, flush=True)
+            total_count = 0
+        else:
+            total_count = total_count_result[0]
+            
+        print(f"rejected_rows表中有 {total_count} 行数据", file=sys.stderr, flush=True)
 
-        # Get paginated results
+        # 获取分页结果
         offset = (page - 1) * page_size
-        cursor.execute(f"SELECT * FROM rejected_rows LIMIT {page_size} OFFSET {offset}")
-        rows = cursor.fetchall()
+        try:
+            cursor.execute(f"SELECT * FROM rejected_rows LIMIT {page_size} OFFSET {offset}")
+            rows = cursor.fetchall()
+            print(f"查询返回 {len(rows)} 行数据", file=sys.stderr, flush=True)
+        except sqlite3.Error as e:
+            print(f"查询rejected_rows时发生SQLite错误: {str(e)}", file=sys.stderr, flush=True)
+            return jsonify({"status": "error", "message": f"数据库查询错误: {str(e)}"}), 500
 
-        # Convert to list of dicts
+        # 转换为字典列表
         results = []
         for row in rows:
             row_dict = {key: row[key] for key in row.keys()}
-            # Parse raw_data JSON
+            # 解析raw_data JSON
             if 'raw_data' in row_dict:
                 try:
                     row_dict['raw_data'] = json.loads(row_dict['raw_data'])
-                except:
+                except json.JSONDecodeError:
+                    # 如果不是有效的JSON，保持原样
                     pass
+                except Exception as e:
+                    print(f"解析raw_data时出错: {str(e)}", file=sys.stderr, flush=True)
             results.append(row_dict)
 
         conn.close()
@@ -777,8 +880,9 @@ def get_rejected_rows():
             "results": results
         })
     except Exception as e:
+        print(f"获取rejected_rows时发生错误: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         return jsonify({"status": "error", "message": str(e)}), 500
-
 
 @app.route('/api/process-rejected-row', methods=['POST'])
 def process_rejected_row():

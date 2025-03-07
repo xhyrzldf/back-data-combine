@@ -712,6 +712,21 @@ function loadTemplateMemory() {
     }
 }
 
+function updateDisplayFileMappingWithConflictResolution() {
+    // 保存原始函数
+    const originalDisplayFileMapping = displayFileMapping;
+    
+    // 重写displayFileMapping函数以处理冲突
+    displayFileMapping = function(data, fileIndex) {
+        // 在显示前解决映射冲突
+        data.columns = detectAndResolveMappingConflicts(data.columns);
+        
+        // 调用原始函数显示映射
+        originalDisplayFileMapping(data, fileIndex);
+    };
+}
+
+
 // 添加模板记忆系统的钩子
 function initTemplateMemory() {
     // 加载存储的映射
@@ -975,9 +990,10 @@ function updateTemplateMappingsUI() {
     
     // 为删除按钮添加事件监听器
     mappingsContainer.querySelectorAll('.mapping-remove-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', async function() {
             const signature = this.dataset.signature;
-            if (confirm('确定要删除这个字段映射配置吗？')) {
+            const confirmDelete = await showDynamicConfirm('确定要删除这个字段映射配置吗？', '删除映射配置');
+            if (confirmDelete) {
                 delete templateMemory[currentTemplate][signature];
                 localStorage.setItem('templateMemory', JSON.stringify(templateMemory));
                 updateTemplateMappingsUI();
@@ -1589,9 +1605,13 @@ function displayProcessingStats(data) {
     elements.processingStats.appendChild(statsEl);
 }
 
-// Load rejected rows for manual verification
+
+//loadRejectedRows函数
 async function loadRejectedRows(page = 1) {
     if (!currentDatabase) return;
+
+    // 首先检查rejected_rows表中的行数，添加调试信息
+    console.log(`正在加载拒绝行，数据库: ${currentDatabase}, 页码: ${page}`);
 
     try {
         const response = await fetch(`${API_BASE_URL}/rejected-rows`, {
@@ -1605,16 +1625,29 @@ async function loadRejectedRows(page = 1) {
         });
 
         const data = await response.json();
+        console.log('拒绝行查询结果:', data);
 
         if (data.status === 'success') {
-            // Display stats
+            // 显示明确的拒绝行数量信息
             elements.verificationStats.innerHTML = `
                 <div class="stats-item">
                     <strong>总需校对行数:</strong> <span>${data.total_count}</span>
                 </div>
             `;
 
-            // Display rows
+            // 如果没有拒绝行，显示一条消息
+            if (data.total_count === 0) {
+                elements.verificationTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="text-align: center; padding: 20px;">
+                            没有需要校对的行。如果您认为这不正确，请检查后端日志，可能有处理错误。
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // 显示行
             elements.verificationTableBody.innerHTML = '';
 
             data.results.forEach(row => {
@@ -1627,7 +1660,30 @@ async function loadRejectedRows(page = 1) {
                 rowNumberCell.textContent = row.row_number;
 
                 const dataCell = document.createElement('td');
-                dataCell.textContent = row.raw_data ? JSON.stringify(row.raw_data).substring(0, 100) + '...' : '';
+                // 改进raw_data处理，尝试显示更有用的信息
+                try {
+                    if (typeof row.raw_data === 'string') {
+                        try {
+                            // 尝试解析JSON字符串
+                            const parsedData = JSON.parse(row.raw_data);
+                            dataCell.textContent = JSON.stringify(parsedData, null, 2).substring(0, 150) + '...';
+                        } catch (e) {
+                            // 如果解析失败，直接显示字符串
+                            dataCell.textContent = row.raw_data.substring(0, 150) + '...';
+                        }
+                    } else if (row.raw_data) {
+                        dataCell.textContent = JSON.stringify(row.raw_data).substring(0, 150) + '...';
+                    } else {
+                        dataCell.textContent = '无数据';
+                    }
+                } catch (e) {
+                    dataCell.textContent = `[数据显示错误: ${e.message}]`;
+                }
+
+                // 添加失败原因列
+                const reasonCell = document.createElement('td');
+                reasonCell.textContent = row.reason || '未知原因';
+                reasonCell.style.color = 'var(--error-color)';
 
                 const actionsCell = document.createElement('td');
                 actionsCell.className = 'verification-actions';
@@ -1648,18 +1704,33 @@ async function loadRejectedRows(page = 1) {
                 rowEl.appendChild(fileCell);
                 rowEl.appendChild(rowNumberCell);
                 rowEl.appendChild(dataCell);
+                rowEl.appendChild(reasonCell); // 添加失败原因列
                 rowEl.appendChild(actionsCell);
 
                 elements.verificationTableBody.appendChild(rowEl);
             });
 
-            // Create pagination
+            // 创建分页
             createPagination(data.total_count, data.page, data.page_size, elements.verificationPagination, loadRejectedRows);
         } else {
-            console.error('Failed to load rejected rows:', data.message);
+            console.error('加载被拒绝行失败:', data.message);
+            elements.verificationTableBody.innerHTML = `
+                <tr>
+                    <td colspan="4" style="text-align: center; padding: 20px; color: var(--error-color);">
+                        加载被拒绝行失败: ${data.message}
+                    </td>
+                </tr>
+            `;
         }
     } catch (error) {
-        console.error('Failed to load rejected rows:', error);
+        console.error('加载被拒绝行失败:', error);
+        elements.verificationTableBody.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align: center; padding: 20px; color: var(--error-color);">
+                    加载被拒绝行失败: ${error.message}
+                </td>
+            </tr>
+        `;
     }
 }
 
@@ -1792,28 +1863,13 @@ async function deleteRejectedRow() {
 }
 
 // Delete a rejected row directly
-async function deleteRejectedRowDirect(rowId) {
-    try {
-        const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                db_path: currentDatabase,
-                row_id: rowId,
-                action: 'delete'
-            })
-        });
+async function deleteRejectedRow() {
+    if (!currentRejectedRow) return;
 
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            loadRejectedRows();
-        } else {
-            alert(`Failed to delete row: ${data.message}`);
-        }
-    } catch (error) {
-        console.error('Failed to delete row:', error);
-        alert('Failed to delete row. Please try again.');
+    const confirmDelete = await showDynamicConfirm('确定要删除这一行吗？此操作不可撤销。', '删除确认');
+    if (confirmDelete) {
+        await deleteRejectedRowDirect(currentRejectedRow.id);
+        closeRowEditor();
     }
 }
 
@@ -1857,9 +1913,16 @@ function createPagination(totalCount, currentPage, pageSize, container, callback
     container.appendChild(nextBtn);
 }
 
-// Finish processing and go to database viewer
 // 修改 finishProcessing 函数
-function finishProcessing() {
+async function finishProcessing() {
+    // 检查是否还有未处理的行
+    if (document.querySelectorAll('#verificationTableBody tr').length > 0) {
+        const continueAnyway = await showDynamicConfirm('仍有未处理的行，确定要完成处理吗？未处理的行将不会导入到数据库中。', '完成处理确认');
+        if (!continueAnyway) {
+            return;
+        }
+    }
+    
     // 存储当前映射
     storeCurrentMappings();
     
@@ -2524,7 +2587,8 @@ async function deleteTemplate(name) {
         return;
     }
 
-    if (!confirm(`确定要删除模板 "${name}" 吗？此操作不可撤销。`)) {
+    const confirmDelete = await showDynamicConfirm(`确定要删除模板 "${name}" 吗？此操作不可撤销。`, '删除模板');
+    if (!confirmDelete) {
         return;
     }
 
