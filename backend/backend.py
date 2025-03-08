@@ -1128,6 +1128,9 @@ def get_rejected_rows():
         traceback.print_exc(file=sys.stderr)
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# 修改 process_rejected_row 函数，确保 ID 字段始终以字符串形式存储
+# 在 backend.py 中查找并替换 process_rejected_row 函数
+
 @app.route('/api/process-rejected-row', methods=['POST'])
 def process_rejected_row():
     """Process a manually fixed rejected row"""
@@ -1203,6 +1206,10 @@ def process_rejected_row():
                     if field in ["source_file", "row_number"]:
                         continue  # 跳过这些字段
                     
+                    # 特殊处理ID字段，始终以字符串形式存储
+                    if field == "ID" and value is not None:
+                        value = str(value)
+                    
                     # 更新字段值
                     cursor.execute(
                         f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
@@ -1217,7 +1224,7 @@ def process_rejected_row():
                     current_template = templates[template_name]
                     print(f"使用前端指定模板: {template_name}", file=sys.stderr, flush=True)
                 # 否则使用默认模板
-                elif default_template and default_template in templates:
+                elif default_template:
                     current_template = templates[default_template]
                     print(f"使用默认模板: {default_template}", file=sys.stderr, flush=True)
                 # 如果以上都失败，使用第一个可用模板
@@ -1289,6 +1296,13 @@ def process_rejected_row():
                                     if mapped_column in t_info:
                                         target_type = t_info[mapped_column]["type"]
                                         break
+                                
+                                # 特殊处理ID字段，始终以字符串形式存储
+                                if mapped_column == "ID" and value is not None:
+                                    value = str(value)
+                                    all_columns.append(mapped_column)
+                                    all_values.append(value)
+                                    continue
                                         
                                 # 尝试转换值
                                 converted_value = convert_value(value, target_type)
@@ -1302,6 +1316,10 @@ def process_rejected_row():
                 for field, value in fixed_data.items():
                     if field in ["source_file", "row_number"]:
                         continue  # 已添加
+                        
+                    # 特殊处理ID字段，始终以字符串形式存储
+                    if field == "ID" and value is not None:
+                        value = str(value)
                         
                     # 检查是否已存在该字段，如果存在则更新值，否则添加
                     if field in all_columns:
@@ -1325,6 +1343,12 @@ def process_rejected_row():
                         # 回退到只插入修改的字段
                         columns = list(fixed_data.keys())
                         values = [fixed_data[col] for col in columns]
+                        
+                        # 特殊处理ID字段，确保以字符串形式存储
+                        for i, col in enumerate(columns):
+                            if col == "ID" and values[i] is not None:
+                                values[i] = str(values[i])
+                        
                         if "source_file" not in fixed_data:
                             columns.append("source_file")
                             values.append(source_file)
@@ -1342,6 +1366,12 @@ def process_rejected_row():
                     # 使用原来的方式作为备选
                     columns = list(fixed_data.keys())
                     values = [fixed_data[col] for col in columns]
+                    
+                    # 特殊处理ID字段，确保以字符串形式存储
+                    for i, col in enumerate(columns):
+                        if col == "ID" and values[i] is not None:
+                            values[i] = str(values[i])
+                    
                     if "source_file" not in fixed_data:
                         columns.append("source_file")
                         values.append(source_file)
