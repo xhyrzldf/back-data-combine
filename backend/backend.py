@@ -57,16 +57,14 @@ default_template = {
 
 templates["默认模板"] = default_template.copy()
 
-
-# Utility Functions
 def create_database(db_path):
     """Create a new SQLite database with the standard schema"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create main table with standard columns
+    # Create main table with standard columns - 修改ID和row_number为TEXT类型
     columns = [
-        "ID INTEGER PRIMARY KEY",
+        "ID TEXT PRIMARY KEY",  # 改为TEXT类型
         "记账日期 TEXT",
         "记账时间 TEXT",
         "账户名 TEXT",
@@ -83,17 +81,17 @@ def create_database(db_path):
         "对手账号 TEXT",
         "对手开户行 TEXT",
         "source_file TEXT",
-        "row_number INTEGER"
+        "row_number TEXT"  # 改为TEXT类型
     ]
-
+    
     cursor.execute(f"CREATE TABLE IF NOT EXISTS transactions ({', '.join(columns)})")
-
-    # 创建带新列的rejected_rows表
+    
+    # 创建带新列的rejected_rows表，确保row_number为TEXT类型
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rejected_rows (
         id INTEGER PRIMARY KEY,
         source_file TEXT,
-        row_number INTEGER,
+        row_number TEXT,
         column_name TEXT,
         target_column TEXT,
         original_value TEXT,
@@ -101,9 +99,10 @@ def create_database(db_path):
         reason TEXT
     )
     """)
-
+    
     conn.commit()
     conn.close()
+
 
 def update_recent_files(file_path):
     """Update the list of recent files"""
@@ -164,6 +163,7 @@ def detect_column_type(series):
     # Otherwise, it's text
     return "text"
 
+# 修改convert_value函数，增加对大整数的特别处理
 def convert_value(value, target_type):
     """Convert a value to the target data type"""
     if pd.isna(value):
@@ -172,10 +172,29 @@ def convert_value(value, target_type):
     value = str(value).strip()
     if not value:
         return None
-
+    
     try:
         if target_type == "int":
-            return int(float(value))
+            # 尝试转换为整数
+            try:
+                # 先转为浮点，再转为整数
+                int_value = int(float(value))
+                # 检查是否是大整数，如果是，则返回字符串
+                if abs(int_value) > 9223372036854775807:  # SQLite INTEGER最大值
+                    print(f"警告：整数值 {int_value} 太大，将以字符串形式存储", file=sys.stderr, flush=True)
+                    return value  # 直接返回字符串形式
+                return int_value
+            except ValueError as e:
+                # 如果无法转换，尝试清理可能的非数字字符后再转换
+                cleaned_value = ''.join(c for c in value if c.isdigit() or c == '-')
+                if cleaned_value:
+                    try:
+                        return int(cleaned_value)
+                    except ValueError:
+                        # 如果仍然失败，抛出原始异常
+                        raise e
+                else:
+                    raise e
         elif target_type == "float":
             return float(value)
         elif target_type == "date":
@@ -199,6 +218,7 @@ def convert_value(value, target_type):
     except Exception as e:
         # 转换失败时抛出异常，而不是返回原始值
         raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
+
 
 # API Routes
 @app.route('/api/ping', methods=['GET'])
@@ -541,8 +561,8 @@ def process_files():
             "details": traceback.format_exc()
         }), 500
 
-
-# 辅助函数：处理数据框架的一个块
+# 修改process_dataframe_chunk函数，确保row_number始终被转换为字符串
+# 修改process_dataframe_chunk函数，确保row_number和ID始终为字符串
 def process_dataframe_chunk(df, file_path, start_row, column_mappings):
     """处理数据框的一个块，返回映射数据和被拒绝的行"""
     mapped_data = []
@@ -587,9 +607,9 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                 "对手账号": None,
                 "对手开户行": None,
                 "source_file": file_name,
-                "row_number": row_number
+                "row_number": str(row_number)  # 确保行号是字符串
             }
-
+    
             has_data = False
             row_has_errors = False  # 标记该行是否有转换错误
             
@@ -602,14 +622,19 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                         
                         if pd.notna(value) and str(value).strip():
                             has_data = True
-
+    
                         # 获取目标类型
                         target_type = "text"  # 默认
                         for template in templates.values():
                             if target_col in template:
                                 target_type = template[target_col]["type"]
                                 break
-
+                                
+                        # 如果是ID字段，确保以字符串形式存储
+                        if target_col == "ID" and pd.notna(value):
+                            mapped_row[target_col] = str(value)
+                            continue
+    
                         # 尝试转换数据类型
                         mapped_row[target_col] = convert_value(value, target_type)
                     except Exception as conv_error:
@@ -625,10 +650,10 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                             # 保证有值的original_value
                             safe_original_value = original_value if original_value else "null"
                             
-                            # 将每个出错的字段单独记录
+                            # 将每个出错的字段单独记录，确保row_number是字符串
                             rejected_rows.append({
                                 "source_file": file_name,
-                                "row_number": row_number,
+                                "row_number": str(row_number),  # 确保行号是字符串
                                 "column_name": orig_col,  # 记录原始列名
                                 "target_column": target_col,  # 记录目标列名
                                 "original_value": safe_original_value,  # 原始值
@@ -644,11 +669,11 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
                         
                         # 重置目标列值
                         mapped_row[target_col] = None
-
+    
             # 跳过空行
             if not has_data:
                 continue
-
+    
             # 如果行没有错误，添加到映射数据
             if not row_has_errors:
                 mapped_data.append(mapped_row)
@@ -658,7 +683,7 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
             try:
                 rejected_rows.append({
                     "source_file": file_name,
-                    "row_number": row_number,
+                    "row_number": str(row_number),  # 确保行号是字符串
                     "column_name": "整行错误",  # 标记为整行错误
                     "target_column": "",  # 没有特定目标列
                     "original_value": "整行处理失败",  # 简单描述
@@ -677,36 +702,93 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
     
     return {"mapped_data": mapped_data, "rejected_rows": rejected_rows}
 
-# 辅助函数：将数据插入数据库
 def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
     """将映射数据和被拒绝的行插入数据库"""
     try:
         # 插入映射数据
         if mapped_data and len(mapped_data) > 0:
-            columns = list(mapped_data[0].keys())
-            placeholders = ", ".join(["?" for _ in columns])
-            insert_query = f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})"
-
             for row in mapped_data:
+                # 确保ID和row_number字段是字符串类型
+                if 'ID' in row and row['ID'] is not None:
+                    row['ID'] = str(row['ID'])
+                if 'row_number' in row and row['row_number'] is not None:
+                    row['row_number'] = str(row['row_number'])
+                
+                # 检查其他字段，将大整数转换为字符串
+                for key in row:
+                    if isinstance(row[key], int) and abs(row[key]) > 9223372036854775807:
+                        row[key] = str(row[key])
+                        print(f"将字段 {key} 的大整数值转换为字符串: {row[key]}", file=sys.stderr, flush=True)
+                
+                # 构建插入查询
+                columns = list(row.keys())
                 values = [row[col] for col in columns]
+                placeholders = ", ".join(["?" for _ in columns])
+                insert_query = f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})"
+                
                 try:
                     cursor.execute(insert_query, values)
                 except sqlite3.Error as sql_error:
                     print(f"SQL错误(插入映射数据): {str(sql_error)}", file=sys.stderr, flush=True)
-                    # 继续处理其他行
-                    continue
+                    print(f"问题数据类型: {[type(v) for v in values]}", file=sys.stderr, flush=True)
+                    print(f"问题数据值: {values}", file=sys.stderr, flush=True)
+                    
+                    # 更强的安全类型转换
+                    safe_values = []
+                    for v in values:
+                        if isinstance(v, int) and abs(v) > 9223372036854775807:
+                            safe_values.append(str(v))
+                        elif isinstance(v, float) and (abs(v) > 9223372036854775807 or math.isnan(v) or math.isinf(v)):
+                            safe_values.append(str(v))
+                        else:
+                            safe_values.append(v)
+                    
+                    try:
+                        cursor.execute(insert_query, safe_values)
+                        print("使用安全类型值重试成功", file=sys.stderr, flush=True)
+                    except sqlite3.Error as retry_error:
+                        print(f"使用安全类型重试仍然失败: {str(retry_error)}", file=sys.stderr, flush=True)
+                        
+                        # 最后的尝试：将所有值转换为字符串
+                        try:
+                            all_string_values = [str(v) if v is not None else None for v in values]
+                            cursor.execute(insert_query, all_string_values)
+                            print("使用全字符串类型重试成功", file=sys.stderr, flush=True)
+                        except sqlite3.Error as final_error:
+                            print(f"所有尝试都失败，跳过此行: {str(final_error)}", file=sys.stderr, flush=True)
+                            continue
 
-        # 插入被拒绝的行
+        # 插入被拒绝的行 - 直接使用当前连接，而不是创建新连接
         if rejected_rows and len(rejected_rows) > 0:
             print(f"正在插入 {len(rejected_rows)} 条被拒绝的行...", file=sys.stderr, flush=True)
             
-            # 确保所有必要字段都存在
-            required_fields = [
-                "source_file", "row_number", "column_name", 
-                "target_column", "original_value", "raw_data", "reason"
-            ]
+            # 确保表存在
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rejected_rows (
+                id INTEGER PRIMARY KEY,
+                source_file TEXT,
+                row_number TEXT,
+                column_name TEXT,
+                target_column TEXT,
+                original_value TEXT,
+                raw_data TEXT,
+                reason TEXT
+            )
+            """)
+            conn.commit()
             
+            # 执行批量插入
             for row in rejected_rows:
+                # 确保row_number是字符串
+                if 'row_number' in row and row['row_number'] is not None:
+                    row['row_number'] = str(row['row_number'])
+                
+                # 确保所有必要字段都存在
+                required_fields = [
+                    "source_file", "row_number", "column_name", 
+                    "target_column", "original_value", "raw_data", "reason"
+                ]
+                
                 # 确保所有字段都有值，没有值的用空字符串代替
                 for field in required_fields:
                     if field not in row or row[field] is None:
@@ -720,19 +802,16 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
                         print(f"序列化raw_data失败: {str(e)}", file=sys.stderr, flush=True)
                         row["raw_data"] = str(row["raw_data"])
                 
-                # 确保所有字段都是字符串形式
+                # 构建值和占位符
                 values = [
-                    row["source_file"],
-                    row["row_number"],
-                    row["column_name"],
-                    row["target_column"],
-                    row["original_value"],
-                    row["raw_data"],
-                    row["reason"]
+                    str(row["source_file"]),
+                    str(row["row_number"]),
+                    str(row["column_name"]),
+                    str(row["target_column"]),
+                    str(row["original_value"]),
+                    str(row["raw_data"]),
+                    str(row["reason"])
                 ]
-                
-                # 打印插入的数据以进行调试
-                print(f"插入被拒绝行: {row['column_name']}={row['original_value']}", file=sys.stderr, flush=True)
                 
                 try:
                     # 使用参数化查询避免SQL注入
@@ -742,32 +821,40 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         values
                     )
-                    
-                    # 检查是否真的插入了数据
-                    if cursor.rowcount == 0:
-                        print(f"警告: 行似乎未被插入. source_file={row['source_file']}, row_number={row['row_number']}", 
-                              file=sys.stderr, flush=True)
+                    print(f"成功插入被拒绝行: {row['column_name']}={row['original_value']}", file=sys.stderr, flush=True)
                 except sqlite3.Error as sql_error:
-                    print(f"SQL错误(插入被拒绝行): {str(sql_error)}", file=sys.stderr, flush=True)
+                    print(f"插入被拒绝行SQL错误: {str(sql_error)}", file=sys.stderr, flush=True)
                     print(f"问题数据: {values}", file=sys.stderr, flush=True)
-                    # 继续处理其他行
-                    continue
+                    # 尝试一种更安全的插入方法，直接执行SQL
+                    try:
+                        sql = f"""INSERT INTO rejected_rows 
+                                  (source_file, row_number, column_name, target_column, original_value, raw_data, reason)
+                                  VALUES 
+                                  ('{values[0].replace("'", "''")}', 
+                                   '{values[1].replace("'", "''")}', 
+                                   '{values[2].replace("'", "''")}', 
+                                   '{values[3].replace("'", "''")}', 
+                                   '{values[4].replace("'", "''")}', 
+                                   '{values[5].replace("'", "''")}', 
+                                   '{values[6].replace("'", "''")}')"""
+                        cursor.execute(sql)
+                        print("使用替代方法成功插入被拒绝行", file=sys.stderr, flush=True)
+                    except sqlite3.Error as alt_error:
+                        print(f"替代方法也失败: {str(alt_error)}", file=sys.stderr, flush=True)
                 except Exception as e:
                     print(f"插入被拒绝行时发生未知错误: {str(e)}", file=sys.stderr, flush=True)
                     print(f"问题数据: {values}", file=sys.stderr, flush=True)
-                    continue
             
-            # 执行一次手动提交确保数据被写入
+            # 主连接提交
             try:
                 conn.commit()
-                print(f"被拒绝的行已提交到数据库", file=sys.stderr, flush=True)
+                print(f"完成插入被拒绝行，提交成功", file=sys.stderr, flush=True)
             except sqlite3.Error as commit_error:
                 print(f"提交被拒绝行时发生错误: {str(commit_error)}", file=sys.stderr, flush=True)
                 
     except Exception as e:
         print(f"插入数据错误: {str(e)}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
-        # 继续，不要中断整个处理
 
 @app.route('/api/query-database', methods=['POST'])
 def query_database():
@@ -853,6 +940,93 @@ def query_database():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/check-database', methods=['POST'])
+def check_database():
+    """检查数据库结构和潜在问题"""
+    data = request.json
+    db_path = data.get('db_path')
+
+    if not db_path:
+        return jsonify({"status": "error", "message": "缺少数据库路径"}), 400
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        tables = []
+        errors = []
+    
+        # 检查表是否存在
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        table_names = [row[0] for row in cursor.fetchall()]
+        
+        if 'transactions' not in table_names:
+            errors.append("transactions表不存在")
+        
+        if 'rejected_rows' not in table_names:
+            errors.append("rejected_rows表不存在")
+        
+        # 获取表结构
+        for table_name in table_names:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [f"{row[1]} ({row[2]})" for row in cursor.fetchall()]
+            tables.append({"name": table_name, "columns": columns})
+            
+            # 检查字段类型是否合适
+            if table_name == 'transactions':
+                id_type = None
+                row_number_type = None
+                
+                for row in cursor.execute(f"PRAGMA table_info({table_name})"):
+                    if row[1] == 'ID':
+                        id_type = row[2]
+                    elif row[1] == 'row_number':
+                        row_number_type = row[2]
+                
+                if id_type != 'TEXT' and id_type is not None:
+                    errors.append(f"transactions表中的ID字段类型为{id_type}，应为TEXT以支持大整数")
+                
+                if row_number_type != 'TEXT' and row_number_type is not None:
+                    errors.append(f"transactions表中的row_number字段类型为{row_number_type}，应为TEXT以支持大整数")
+            
+            elif table_name == 'rejected_rows':
+                row_number_type = None
+                
+                for row in cursor.execute(f"PRAGMA table_info({table_name})"):
+                    if row[1] == 'row_number':
+                        row_number_type = row[2]
+                
+                if row_number_type != 'TEXT' and row_number_type is not None:
+                    errors.append(f"rejected_rows表中的row_number字段类型为{row_number_type}，应为TEXT以支持大整数")
+        
+        # 检查rejected_rows表是否为空
+        if 'rejected_rows' in table_names:
+            cursor.execute("SELECT COUNT(*) FROM rejected_rows")
+            rejected_count = cursor.fetchone()[0]
+            
+            if rejected_count == 0:
+                # 检查日志中可能的错误
+                cursor.execute("PRAGMA integrity_check")
+                integrity_result = cursor.fetchall()
+                
+                if integrity_result[0][0] != 'ok':
+                    errors.append(f"数据库一致性检查失败: {integrity_result}")
+                
+                # 检查rejected_rows表是否有正确的索引
+                cursor.execute("PRAGMA index_list(rejected_rows)")
+                indices = cursor.fetchall()
+                
+                if not indices:
+                    errors.append("rejected_rows表缺少索引，可能影响性能")
+        
+        conn.close()
+    
+        return jsonify({
+            "status": "success",
+            "tables": tables,
+            "errors": errors
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "traceback": traceback.format_exc()}), 500
 
 @app.route('/api/rejected-rows', methods=['POST'])
 def get_rejected_rows():

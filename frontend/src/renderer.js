@@ -1609,7 +1609,9 @@ async function loadRejectedRows(page = 1) {
     if (!currentDatabase) return;
 
     console.log(`正在加载拒绝行，数据库: ${currentDatabase}, 页码: ${page}`);
-
+    elements.verificationStats.innerHTML = '<div class="loading">正在加载数据...</div>';
+    elements.verificationTableBody.innerHTML = '<tr><td colspan="6">加载中...</td></tr>';
+    
     try {
         const response = await fetch(`${API_BASE_URL}/rejected-rows`, {
             method: 'POST',
@@ -1620,10 +1622,10 @@ async function loadRejectedRows(page = 1) {
                 page_size: 20
             })
         });
-
+    
         const data = await response.json();
         console.log('拒绝行查询结果:', data);
-
+    
         if (data.status === 'success') {
             // 显示明确的拒绝行数量信息
             elements.verificationStats.innerHTML = `
@@ -1631,19 +1633,33 @@ async function loadRejectedRows(page = 1) {
                     <strong>总需校对行数:</strong> <span>${data.total_count}</span>
                 </div>
             `;
-
-            // 如果没有拒绝行，显示一条消息
+    
+            // 如果没有拒绝行，显示一条消息和诊断按钮
             if (data.total_count === 0) {
                 elements.verificationTableBody.innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px;">
-                            没有需要校对的行。如果您认为这不正确，请检查后端日志，可能有处理错误。
+                        <td colspan="6" style="text-align: center; padding: 20px;">
+                            <p>没有需要校对的行。如果您认为这不正确，可能存在以下问题：</p>
+                            <ul style="text-align: left; margin: 10px 0; padding-left: 40px;">
+                                <li>数据库创建时出现错误，rejected_rows表未正确创建</li>
+                                <li>插入被拒绝行时出现了数据库错误，如整数溢出</li>
+                                <li>原始数据可能没有任何需要校对的行</li>
+                            </ul>
+                            <button id="diagnoseDatabaseBtn" class="btn primary" style="margin-top: 10px;">
+                                诊断数据库
+                            </button>
                         </td>
                     </tr>
                 `;
+                
+                // 添加诊断按钮事件
+                document.getElementById('diagnoseDatabaseBtn').addEventListener('click', async () => {
+                    await diagnoseDatabaseIssues();
+                });
+                
                 return;
             }
-
+    
             // 更新表头以包含列名
             if (elements.verificationTable.querySelector('thead')) {
                 elements.verificationTable.querySelector('thead').innerHTML = `
@@ -1657,10 +1673,10 @@ async function loadRejectedRows(page = 1) {
                     </tr>
                 `;
             }
-
+    
             // 显示行
             elements.verificationTableBody.innerHTML = '';
-
+    
             data.results.forEach(row => {
                 const rowEl = document.createElement('tr');
             
@@ -1708,14 +1724,14 @@ async function loadRejectedRows(page = 1) {
             
                 elements.verificationTableBody.appendChild(rowEl);
             });
-
+    
             // 创建分页
             createPagination(data.total_count, data.page, data.page_size, elements.verificationPagination, loadRejectedRows);
         } else {
             console.error('加载被拒绝行失败:', data.message);
             elements.verificationTableBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align: center; padding: 20px; color: var(--error-color);">
+                    <td colspan="6" style="text-align: center; padding: 20px; color: var(--error-color);">
                         加载被拒绝行失败: ${data.message}
                     </td>
                 </tr>
@@ -1725,11 +1741,141 @@ async function loadRejectedRows(page = 1) {
         console.error('加载被拒绝行失败:', error);
         elements.verificationTableBody.innerHTML = `
             <tr>
-                <td colspan="5" style="text-align: center; padding: 20px; color: var(--error-color);">
+                <td colspan="6" style="text-align: center; padding: 20px; color: var(--error-color);">
                     加载被拒绝行失败: ${error.message}
                 </td>
             </tr>
         `;
+    }
+}
+
+// 添加数据库诊断功能
+async function diagnoseDatabaseIssues() {
+    if (!currentDatabase) return;
+    
+    try {
+        // 显示诊断中的消息
+        elements.verificationTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px;">
+                    正在诊断数据库，请稍候...
+                </td>
+            </tr>
+        `;
+        
+        // 创建一个检查表结构的API请求
+        const response = await fetch(`${API_BASE_URL}/check-database`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                db_path: currentDatabase
+            })
+        });
+        
+        // 如果API不存在，显示提示信息
+        if (response.status === 404) {
+            elements.verificationTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 20px;">
+                        <p>诊断API不存在。请联系开发人员添加此功能。</p>
+                        <p>您可以尝试以下操作：</p>
+                        <ul style="text-align: left; margin: 10px 0; padding-left: 40px;">
+                            <li>重新运行数据处理流程</li>
+                            <li>检查后台日志，查找可能的错误</li>
+                            <li>确保数据库文件存在且可访问</li>
+                        </ul>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // 显示诊断结果
+            let diagnosisContent = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 20px;">
+                        <h4>数据库诊断结果</h4>
+                        <div style="text-align: left; margin: 15px 0;">
+            `;
+            
+            // 添加表结构信息
+            diagnosisContent += `<p><strong>数据库表结构:</strong></p><ul>`;
+            for (const table of data.tables) {
+                diagnosisContent += `<li>${table.name}: ${table.columns.join(', ')}</li>`;
+            }
+            diagnosisContent += `</ul>`;
+            
+            // 添加错误信息
+            if (data.errors && data.errors.length > 0) {
+                diagnosisContent += `<p><strong>发现问题:</strong></p><ul>`;
+                for (const error of data.errors) {
+                    diagnosisContent += `<li>${error}</li>`;
+                }
+                diagnosisContent += `</ul>`;
+            } else {
+                diagnosisContent += `<p><strong>未发现明显问题。</strong></p>`;
+            }
+            
+            // 添加建议的解决方案
+            diagnosisContent += `
+                <p><strong>建议操作:</strong></p>
+                <ul>
+                    <li>重新创建数据库并处理数据</li>
+                    <li>检查后台日志中的详细错误信息</li>
+                    <li>确认原始数据格式是否正确</li>
+                </ul>
+            `;
+            
+            diagnosisContent += `
+                        </div>
+                        <button id="refreshRejectedRowsBtn" class="btn primary">刷新数据</button>
+                    </td>
+                </tr>
+            `;
+            
+            elements.verificationTableBody.innerHTML = diagnosisContent;
+            
+            // 添加刷新按钮事件
+            document.getElementById('refreshRejectedRowsBtn').addEventListener('click', () => {
+                loadRejectedRows();
+            });
+        } else {
+            // 显示错误信息
+            elements.verificationTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 20px; color: var(--error-color);">
+                        诊断失败: ${data.message}
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('数据库诊断失败:', error);
+        // 显示错误信息并提供手动解决方案
+        elements.verificationTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 20px; color: var(--error-color);">
+                    <p>数据库诊断失败: ${error.message}</p>
+                    <p>可能的解决方案:</p>
+                    <ul style="text-align: left; margin: 10px 0; padding-left: 40px;">
+                        <li>重新创建数据库并处理数据</li>
+                        <li>检查后台日志中的详细错误信息</li>
+                        <li>确认原始数据中是否存在异常数据（如非常大的数值）</li>
+                    </ul>
+                    <button id="manualRetryBtn" class="btn primary" style="margin-top: 10px;">
+                        重试加载
+                    </button>
+                </td>
+            </tr>
+        `;
+        
+        // 添加重试按钮事件
+        document.getElementById('manualRetryBtn').addEventListener('click', () => {
+            loadRejectedRows();
+        });
     }
 }
 
@@ -2065,13 +2211,67 @@ async function saveRejectedRow() {
     }
 }
 
-// Delete a rejected row
-async function deleteRejectedRow() {
-    if (!currentRejectedRow) return;
+// Delete a rejected row directly by ID
+async function deleteRejectedRowDirect(rowId) {
+    if (!currentDatabase || !rowId) return;
 
-    if (confirm('确定要删除这一行吗？此操作不可撤销。')) {
-        await deleteRejectedRowDirect(currentRejectedRow.id);
-        closeRowEditor();
+    const confirmDelete = await showDynamicConfirm('确定要删除这一行吗？此操作不可撤销。', '删除确认');
+    if (!confirmDelete) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                db_path: currentDatabase,
+                row_id: rowId,
+                action: 'delete'
+            })
+        });
+    
+        const data = await response.json();
+    
+        if (data.status === 'success') {
+            // 刷新列表以反映删除
+            loadRejectedRows();
+        } else {
+            alert(`删除行失败: ${data.message}`);
+        }
+    } catch (error) {
+        console.error('删除行失败:', error);
+        alert(`删除行失败: ${error.message}`);
+    }
+}
+
+// Delete a rejected row directly by ID
+async function deleteRejectedRowDirect(rowId) {
+    if (!currentDatabase || !rowId) return;
+
+    const confirmDelete = await showDynamicConfirm('确定要删除这一行吗？此操作不可撤销。', '删除确认');
+    if (!confirmDelete) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                db_path: currentDatabase,
+                row_id: rowId,
+                action: 'delete'
+            })
+        });
+    
+        const data = await response.json();
+    
+        if (data.status === 'success') {
+            // 刷新列表以反映删除
+            loadRejectedRows();
+        } else {
+            alert(`删除行失败: ${data.message}`);
+        }
+    } catch (error) {
+        console.error('删除行失败:', error);
+        alert(`删除行失败: ${error.message}`);
     }
 }
 
