@@ -2130,28 +2130,33 @@ async function saveRejectedRow() {
         
         // 添加基本信息
         fixedData["source_file"] = String(currentRejectedRow.source_file || '');
-        fixedData["row_number"] = String(currentRejectedRow.row_number || '0');
+        fixedData["row_number"] = String(currentRejectedRow.row_number || '');
         
-        // 关键修改：添加原始ID (从raw_data中获取)
+        // 记录当前正在修复的列名
+        const targetColumn = currentRejectedRow.target_column || '';
+        const columnName = currentRejectedRow.column_name || '';
+        
+        // 确定事件编号/ID字段
         try {
-            // 尝试从raw_data中提取原始ID
             if (currentRejectedRow.raw_data) {
                 let rawData = currentRejectedRow.raw_data;
                 if (typeof rawData === 'string') {
-                    rawData = JSON.parse(rawData);
+                    try {
+                        rawData = JSON.parse(rawData);
+                    } catch(e) {
+                        console.error('解析raw_data失败:', e);
+                        rawData = {};
+                    }
                 }
                 
-                // 查找可能的ID字段
-                for (const key in rawData) {
-                    if (key.toUpperCase() === 'ID' || key.includes('序号') || key.includes('编号')) {
-                        fixedData["ID"] = String(rawData[key]);
-                        console.log(`已保留原始ID: ${fixedData["ID"]}`);
-                        break;
-                    }
+                // 优先检查事件编号
+                if ('事件编号' in rawData && rawData['事件编号'] !== null) {
+                    fixedData["ID"] = String(rawData['事件编号']);
+                    console.log(`使用事件编号作为ID: ${fixedData["ID"]}`);
                 }
             }
         } catch (e) {
-            console.error('提取原始ID失败:', e);
+            console.error('获取事件编号失败:', e);
         }
         
         // 收集用户编辑的字段值
@@ -2159,19 +2164,27 @@ async function saveRejectedRow() {
             if (!field.name) return;
             
             const fieldValue = field.value.trim();
-            if (fieldValue) {
-                // 特殊处理ID字段，确保是字符串
+            const isTargetField = field.name === targetColumn || field.name === columnName;
+            
+            // 对于当前正在修复的字段，始终包含其值（即使为空）
+            if (isTargetField || fieldValue) {
                 if (field.name === 'ID') {
-                    fixedData[field.name] = String(fieldValue);
-                } 
-                // 其他字段的处理逻辑保持不变
-                else if (field.type === 'number') {
-                    if (field.step === '1') {
-                        fixedData[field.name] = parseInt(fieldValue, 10);
-                    } else {
-                        fixedData[field.name] = parseFloat(fieldValue);
+                    // ID始终以字符串形式存储
+                    fixedData[field.name] = fieldValue ? String(fieldValue) : '';
+                } else if (field.type === 'number') {
+                    // 数值字段
+                    if (fieldValue) {
+                        if (field.step === '1') {
+                            fixedData[field.name] = parseInt(fieldValue, 10);
+                        } else {
+                            fixedData[field.name] = parseFloat(fieldValue);
+                        }
+                    } else if (isTargetField) {
+                        // 如果是目标字段且为空，显式设置为空字符串
+                        fixedData[field.name] = '';
                     }
                 } else {
+                    // 文本字段
                     fixedData[field.name] = fieldValue;
                 }
             }
@@ -2188,41 +2201,43 @@ async function saveRejectedRow() {
                 row_id: currentRejectedRow.id,
                 fixed_data: fixedData,
                 action: 'save',
-                template_name: currentTemplate // 添加当前模板名称
+                template_name: currentTemplate
             })
         });
 
         const data = await response.json();
 
         if (data.status === 'success') {
-            // 找到这一行并更新状态
-            const rowElements = document.querySelectorAll('#verificationTableBody tr');
-            for (const rowEl of rowElements) {
-                const fileCell = rowEl.querySelector('td:first-child');
-                const rowNumCell = rowEl.querySelector('td:nth-child(2)');
-                
-                if (fileCell && rowNumCell && 
-                    fileCell.textContent.trim() === currentRejectedRow.source_file &&
-                    rowNumCell.textContent.trim() == currentRejectedRow.row_number) {
-                    
-                    const statusCell = rowEl.querySelector('.status-cell');
-                    if (statusCell) {
-                        statusCell.innerHTML = '<span class="status-badge status-fixed">已修正</span>';
-                    }
-                    break;
-                }
-            }
-            
+            // 更新行状态为已修正
+            updateRowStatus(currentRejectedRow);
             // 关闭编辑器
             closeRowEditor();
-            // 不刷新整个列表，以保留状态显示
-            // loadRejectedRows();
         } else {
             alert(`保存失败: ${data.message}`);
         }
     } catch (error) {
         console.error('保存失败:', error);
         alert(`保存失败: ${error.message}`);
+    }
+}
+
+// 辅助函数：更新行状态
+function updateRowStatus(rejectedRow) {
+    const rowElements = document.querySelectorAll('#verificationTableBody tr');
+    for (const rowEl of rowElements) {
+        const fileCell = rowEl.querySelector('td:first-child');
+        const rowNumCell = rowEl.querySelector('td:nth-child(2)');
+        
+        if (fileCell && rowNumCell && 
+            fileCell.textContent.trim() === rejectedRow.source_file &&
+            rowNumCell.textContent.trim() == rejectedRow.row_number) {
+            
+            const statusCell = rowEl.querySelector('.status-cell');
+            if (statusCell) {
+                statusCell.innerHTML = '<span class="status-badge status-fixed">已修正</span>';
+            }
+            break;
+        }
     }
 }
 
@@ -2463,7 +2478,7 @@ async function loadData(page = 1, filters = [], sortBy = null, sortDirection = '
     }
 }
 
-// 修改 renderDataTable 函数，使表头点击直接应用排序
+// 修改 renderDataTable 函数，防止错误格式化行号
 function renderDataTable(data, totalCount, currentPage, pageSize) {
     if (!data || data.length === 0) {
         elements.dataTableHead.innerHTML = '<tr><th>无数据</th></tr>';
@@ -2472,15 +2487,31 @@ function renderDataTable(data, totalCount, currentPage, pageSize) {
         return;
     }
 
-    // 获取列类型信息（这部分可能需要根据你的数据结构调整）
+    // 获取列类型信息
     const columnTypes = {};
     for (const column in data[0]) {
+        // 特殊处理row_number，强制设为text类型
+        if (column === 'row_number') {
+            columnTypes[column] = 'text';
+            continue;
+        }
+        
         // 尝试根据值判断列类型
         let value = data[0][column];
         if (typeof value === 'number') {
             columnTypes[column] = 'number';
-        } else if (value instanceof Date || (typeof value === 'string' && !isNaN(Date.parse(value)))) {
+        } else if (value instanceof Date) {
             columnTypes[column] = 'date';
+        } else if (typeof value === 'string') {
+            // 检查字符串是否应该解析为日期
+            // 但对于row_number、ID等特定字段，始终作为文本处理
+            if (['row_number', 'ID', 'source_file'].includes(column)) {
+                columnTypes[column] = 'text';
+            } else if (!isNaN(Date.parse(value))) {
+                columnTypes[column] = 'date';
+            } else {
+                columnTypes[column] = 'text';
+            }
         } else {
             columnTypes[column] = 'text';
         }
@@ -2535,7 +2566,11 @@ function renderDataTable(data, totalCount, currentPage, pageSize) {
             const td = document.createElement('td');
             
             // 根据列类型添加适当的类和格式化
-            if (columnTypes[column] === 'number') {
+            if (column === 'row_number' || column === 'ID' || column === 'source_file') {
+                // 这些特殊字段始终作为文本显示，防止自动转换为日期
+                td.className = 'text-cell';
+                td.textContent = row[column] !== null ? String(row[column]) : '';
+            } else if (columnTypes[column] === 'number') {
                 td.className = 'number-cell';
                 td.textContent = row[column] !== null ? formatNumber(row[column]) : '';
             } else if (columnTypes[column] === 'date') {

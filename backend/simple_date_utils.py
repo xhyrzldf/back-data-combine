@@ -15,14 +15,24 @@ def parse_date(value):
     if not value:
         return None
     
-    # 转为字符串
-    value = str(value).strip()
+    # 确保是字符串
+    str_value = str(value).strip()
+    
+    # 处理带小数点的数值（如"20210610.0"）
+    if '.' in str_value and str_value.split('.')[1] == '0':
+        try:
+            # 尝试提取整数部分
+            int_part = str_value.split('.')[0]
+            if int_part.isdigit():
+                str_value = int_part  # 使用整数部分
+        except Exception:
+            pass
     
     # 处理YYMMDD格式 (例如: 210305)
-    if re.match(r'^\d{6}$', value):
-        yy = value[:2]
-        mm = value[2:4]
-        dd = value[4:6]
+    if re.match(r'^\d{6}$', str_value):
+        yy = str_value[:2]
+        mm = str_value[2:4]
+        dd = str_value[4:6]
         
         try:
             # 合法性检查
@@ -35,36 +45,33 @@ def parse_date(value):
         except ValueError:
             pass
     
-    # 处理中文日期格式
-    if '年' in value and '月' in value:
+    # 处理YYYYMMDD格式 (例如: 20210305)
+    if re.match(r'^\d{8}$', str_value):
+        yyyy = str_value[:4]
+        mm = str_value[4:6]
+        dd = str_value[6:8]
+        
         try:
-            match = re.match(r'(\d{2,4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?', value)
-            if match:
-                year, month, day = match.groups()
-                year = int(year)
-                month = int(month)
-                day = int(day)
-                
-                # 处理两位数年份
-                if year < 100:
-                    year = 2000 + year if year < 50 else 1900 + year
-                
-                return f"{year:04d}-{month:02d}-{day:02d}"
-        except Exception:
+            # 合法性检查
+            month = int(mm)
+            day = int(dd)
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                return f"{yyyy}-{mm}-{dd}"
+        except ValueError:
             pass
     
     # 使用dateutil解析其他格式
     try:
-        parsed_date = parser.parse(value, dayfirst=False, yearfirst=True)
+        parsed_date = parser.parse(str_value, dayfirst=False, yearfirst=True)
         return parsed_date.strftime('%Y-%m-%d')
     except Exception:
         # 如果yearfirst=True失败，尝试其他解析方式
         try:
-            parsed_date = parser.parse(value, dayfirst=True)
+            parsed_date = parser.parse(str_value, dayfirst=True)
             return parsed_date.strftime('%Y-%m-%d')
         except Exception:
             return None
-
+            
 def parse_time(value):
     """
     解析多种格式的时间
