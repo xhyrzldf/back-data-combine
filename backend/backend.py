@@ -35,12 +35,14 @@ def get_expiration_date():
     expiration_str = os.environ.get('EXPIRATION_DATE')
     if expiration_str:
         try:
-            return datetime.fromisoformat(expiration_str.replace('Z', '+00:00'))
+            # 移除时区信息
+            dt = datetime.fromisoformat(expiration_str.replace('Z', '+00:00'))
+            return datetime(dt.year, dt.month, dt.day)  # 返回不带时区的日期
         except ValueError:
             print(f"无效的过期日期格式: {expiration_str}", file=sys.stderr)
     
     # 如果未设置或格式错误，使用默认日期
-    return datetime(2024, 7, 1)
+    return datetime(2025, 7, 1)
 
 def check_expiration():
     """检查应用是否过期"""

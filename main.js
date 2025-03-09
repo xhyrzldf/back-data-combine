@@ -19,7 +19,7 @@ let mainWindow;
 let backendProcess = null;
 let appExpired = false;
 const targetPort = 51234;
-const expirationDate = new Date('2024-07-01T00:00:00Z');
+const expirationDate = new Date('2025-07-01T00:00:00Z');
 let hardwareId = null;
 
 // 添加到IPC处理程序
