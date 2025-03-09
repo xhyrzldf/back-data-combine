@@ -1514,3 +1514,57 @@ body {
     background-color: #E8F5E9;
     color: #4CAF50;
 }
+
+/* 通知样式 */
+.notification {
+    display: flex;
+    align-items: flex-start;
+    padding: 14px 16px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.warning-notification {
+    background-color: rgba(255, 149, 0, 0.1);
+    border-left: 4px solid var(--warning-color);
+}
+
+.notification-icon {
+    margin-right: 12px;
+    color: var(--warning-color);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.notification-content {
+    flex: 1;
+}
+
+.notification-message {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-color);
+    margin-bottom: 8px;
+}
+
+.unmapped-fields-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.unmapped-field-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    background-color: rgba(255, 149, 0, 0.15);
+    border-radius: 16px;
+    font-size: 13px;
+    color: var(--text-color);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}

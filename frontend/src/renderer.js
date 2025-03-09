@@ -109,6 +109,10 @@ const elements = {
     manageTemplatesBtn: document.getElementById('manageTemplatesBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
 
+    // 未映射字段通知相关元素
+    unmappedFieldsNotification: document.getElementById('unmappedFieldsNotification'),
+    unmappedFieldsList: document.getElementById('unmappedFieldsList'),
+
     // 窗口控制按钮
     minimizeBtn: document.getElementById('minimizeBtn'),
     closeBtn: document.getElementById('closeBtn'),
@@ -146,6 +150,12 @@ async function initApp() {
     loadTemplateMemory();
     initTemplateMemory();
     initTemplateMemoryUI();
+    
+    // 初始化未映射字段通知
+    const notificationEl = document.getElementById('unmappedFieldsNotification');
+    if (notificationEl) {
+        notificationEl.style.display = 'none';
+    }
 }
 
 // Load templates from backend
@@ -379,12 +389,12 @@ function showScreen(screenId) {
 
 // Go to a specific step in the new database workflow
 function goToStep(step) {
-    // Hide all step panels
+    // 隐藏所有步骤面板
     document.querySelectorAll('.step-panel').forEach(panel => {
         panel.classList.remove('active');
     });
 
-    // Update step indicators
+    // 更新步骤指示器
     document.querySelectorAll('.step').forEach(stepEl => {
         const stepNum = parseInt(stepEl.dataset.step);
 
@@ -395,13 +405,19 @@ function goToStep(step) {
         }
     });
 
-    // Show the current step panel
+    // 显示当前步骤面板
     document.querySelector(`.step-panel[data-step="${step}"]`).classList.add('active');
 
     currentStep = step;
 
-    // Perform step-specific actions
+    // 执行特定步骤的操作
     if (step === 3) {
+        // 重置通知状态
+        const notificationEl = document.getElementById('unmappedFieldsNotification');
+        if (notificationEl) {
+            notificationEl.style.display = 'none';
+        }
+        
         startFileAnalysis();
     } else if (step === 4) {
         startProcessing();
@@ -606,6 +622,9 @@ async function startFileAnalysisWithMemory() {
 
 // 应用存储的映射到当前文件
 function applyStoredMappings(fileSignatures) {
+    // 设置标志，指示正在应用存储的映射
+    window.applyingStoredMappings = true;
+    
     for (const fileName in fileSignatures) {
         const signature = fileSignatures[fileName];
         
@@ -617,11 +636,18 @@ function applyStoredMappings(fileSignatures) {
             // 初始化此文件的列映射
             if (!columnMappings[fileName]) {
                 columnMappings[fileName] = {};
+            } else {
+                // 清除现有映射
+                for (const key in columnMappings[fileName]) {
+                    columnMappings[fileName][key] = '';
+                }
             }
             
             // 应用存储的映射
             for (const originalCol in storedMapping) {
-                columnMappings[fileName][originalCol] = storedMapping[originalCol];
+                if (storedMapping[originalCol]) { // 只应用非空映射
+                    columnMappings[fileName][originalCol] = storedMapping[originalCol];
+                }
             }
             
             // 更新UI以反映这些映射
@@ -630,8 +656,13 @@ function applyStoredMappings(fileSignatures) {
             fileEls.forEach(fileEl => {
                 const headerEl = fileEl.querySelector('.mapping-file-header h4');
                 if (headerEl && headerEl.textContent.includes(fileName)) {
+                    // 清除所有现有选择
                     const selects = fileEl.querySelectorAll('.mapping-select');
+                    selects.forEach(select => {
+                        select.value = ''; // 重置为"不映射"
+                    });
                     
+                    // 然后应用存储的映射
                     selects.forEach(select => {
                         const columnEl = select.closest('.mapping-column');
                         const nameEl = columnEl.querySelector('.column-name');
@@ -653,8 +684,14 @@ function applyStoredMappings(fileSignatures) {
         }
     }
     
+    // 重置标志
+    window.applyingStoredMappings = false;
+    
     // 更新冲突警告
     updateMappingWarnings();
+    
+    // 更新未映射字段通知
+    updateUnmappedFieldsNotification();
 }
 
 // 存储当前映射
@@ -1168,7 +1205,125 @@ async function saveTemplate() {
     }
 }
 
-// Start file analysis
+/**
+ * 检查模板中哪些字段没有被映射
+ * @returns {Object} 包含未映射字段及其类型的对象
+ */
+function checkUnmappedTemplateFields() {
+    // 获取当前模板字段
+    const template = templates[currentTemplate];
+    if (!template) return {};
+    
+    // 获取所有已映射的字段
+    const mappedFields = new Set();
+    
+    // 收集所有已映射的字段
+    for (const fileName in columnMappings) {
+        const mapping = columnMappings[fileName];
+        for (const originalCol in mapping) {
+            const targetField = mapping[originalCol];
+            if (targetField) {
+                mappedFields.add(targetField);
+            }
+        }
+    }
+    
+    // 查找未被任何列映射的模板字段
+    const unmappedFields = {};
+    for (const field in template) {
+        if (!mappedFields.has(field)) {
+            unmappedFields[field] = template[field].type;
+        }
+    }
+    
+    return unmappedFields;
+}
+
+/**
+ * 更新未映射字段的通知
+ */
+function updateUnmappedFieldsNotification() {
+    const unmappedFields = checkUnmappedTemplateFields();
+    const notificationEl = document.getElementById('unmappedFieldsNotification');
+    const unmappedFieldsListEl = document.getElementById('unmappedFieldsList');
+    
+    if (!notificationEl || !unmappedFieldsListEl) return;
+    
+    const fieldCount = Object.keys(unmappedFields).length;
+    
+    if (fieldCount > 0) {
+        // 更新通知消息
+        const messageEl = notificationEl.querySelector('.notification-message');
+        if (messageEl) {
+            messageEl.textContent = `注意：当前模板中有 ${fieldCount} 个字段未被映射：`;
+        }
+        
+        // 清空并更新字段列表
+        unmappedFieldsListEl.innerHTML = '';
+        
+        // 按字段类型分类
+        const fieldsByType = {
+            'date': [],
+            'time': [],
+            'float': [],
+            'int': [],
+            'text': []
+        };
+        
+        // 分类字段
+        for (const field in unmappedFields) {
+            const type = unmappedFields[field];
+            if (fieldsByType[type]) {
+                fieldsByType[type].push(field);
+            } else {
+                fieldsByType['text'].push(field);
+            }
+        }
+        
+        // 按重要性顺序添加类型提示
+        // 日期、时间、数值通常是最重要的
+        const typeOrder = ['date', 'time', 'float', 'int', 'text'];
+        const typeLabels = {
+            'date': '日期',
+            'time': '时间',
+            'float': '数值',
+            'int': '整数',
+            'text': '文本'
+        };
+        
+        // 添加带有类型提示的字段标签
+        for (const type of typeOrder) {
+            const fields = fieldsByType[type];
+            if (fields && fields.length > 0) {
+                // 添加类型分组标签
+                const typeEl = document.createElement('div');
+                typeEl.className = 'unmapped-type-group';
+                typeEl.style.marginRight = '8px';
+                typeEl.style.fontWeight = '500';
+                typeEl.textContent = `${typeLabels[type]}:`;
+                unmappedFieldsListEl.appendChild(typeEl);
+                
+                // 添加该类型的所有字段
+                for (const field of fields) {
+                    const tagEl = document.createElement('span');
+                    tagEl.className = 'unmapped-field-tag';
+                    tagEl.textContent = field;
+                    unmappedFieldsListEl.appendChild(tagEl);
+                }
+            }
+        }
+        
+        // 显示通知
+        notificationEl.style.display = 'flex';
+    } else {
+        // 如果所有字段都已映射，则隐藏通知
+        notificationEl.style.display = 'none';
+    }
+}
+
+/**
+ * 修改后的文件分析函数，增加对未映射字段的检查
+ */
 async function startFileAnalysis() {
     if (selectedFiles.length === 0) return;
 
@@ -1176,19 +1331,19 @@ async function startFileAnalysis() {
     elements.mappingResults.innerHTML = '';
     elements.goToStep4Btn.disabled = true;
 
-    // Progress bar animation
+    // 初始化进度条
     const progressFill = elements.analysisProgress.querySelector('.progress-fill');
     const progressText = elements.analysisProgress.querySelector('.progress-text');
 
-    // Reset column mappings
+    // 重置列映射
     columnMappings = {};
 
-    // Analyze files one by one
+    // 逐个分析文件
     for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         const fileName = file.split('/').pop().split('\\').pop();
 
-        // Update progress
+        // 更新进度
         const progress = ((i + 1) / selectedFiles.length) * 100;
         progressFill.style.width = `${progress}%`;
         progressText.textContent = `正在分析文件 ${i+1}/${selectedFiles.length}: ${fileName}`;
@@ -1208,20 +1363,27 @@ async function startFileAnalysis() {
             if (data.status === 'success') {
                 displayFileMapping(data, i);
             } else {
-                console.error(`Failed to analyze file ${fileName}: ${data.message}`);
+                console.error(`分析文件失败 ${fileName}: ${data.message}`);
             }
         } catch (error) {
-            console.error(`Failed to analyze file ${fileName}:`, error);
+            console.error(`分析文件失败 ${fileName}:`, error);
         }
     }
 
     // 更新映射警告状态
     updateMappingWarnings();
+    
+    // 检查并更新未映射字段通知
+    updateUnmappedFieldsNotification();
 
     elements.goToStep4Btn.disabled = false;
 }
 
-// Display file mapping results
+/**
+ * 修改后的显示文件映射函数
+ * @param {Object} data - 分析结果数据
+ * @param {number} fileIndex - 文件索引
+ */
 function displayFileMapping(data, fileIndex) {
     const fileName = data.file_name;
     const columns = data.columns;
@@ -1259,13 +1421,13 @@ function displayFileMapping(data, fileIndex) {
         const selectEl = document.createElement('select');
         selectEl.className = 'mapping-select';
 
-        // Add "不映射" option
+        // 添加"不映射"选项
         const noneOption = document.createElement('option');
         noneOption.value = '';
         noneOption.textContent = '不映射';
         selectEl.appendChild(noneOption);
 
-        // Add template fields as options
+        // 添加模板字段作为选项
         const template = templates[currentTemplate];
         for (const field in template) {
             const option = document.createElement('option');
@@ -1279,7 +1441,7 @@ function displayFileMapping(data, fileIndex) {
             selectEl.appendChild(option);
         }
 
-        // Add confidence indicator if mapped
+        // 如果映射了，添加置信度指示器
         let confidenceEl = null;
         if (column.mapped_to) {
             confidenceEl = document.createElement('span');
@@ -1287,11 +1449,11 @@ function displayFileMapping(data, fileIndex) {
             confidenceEl.textContent = `${Math.round(column.similarity * 100)}%`;
         }
 
-        // Handle change event
+        // 处理变更事件
         selectEl.addEventListener('change', (e) => {
             const selectedField = e.target.value;
 
-            // Update column mappings
+            // 更新列映射
             if (!columnMappings[fileName]) {
                 columnMappings[fileName] = {};
             }
@@ -1300,9 +1462,12 @@ function displayFileMapping(data, fileIndex) {
 
             // 更新冲突警告状态
             updateMappingWarnings();
+            
+            // 更新未映射字段通知
+            updateUnmappedFieldsNotification();
         });
 
-        // Initialize column mappings
+        // 初始化列映射
         if (!columnMappings[fileName]) {
             columnMappings[fileName] = {};
         }
@@ -1330,7 +1495,7 @@ function displayFileMapping(data, fileIndex) {
         selectEl.warningEl = warningEl;
         selectEl.tooltipEl = tooltipEl;
 
-        // Add sample values
+        // 添加样本值
         const samplesEl = document.createElement('div');
         samplesEl.className = 'sample-values';
         samplesEl.textContent = '样本: ';
@@ -1363,6 +1528,7 @@ function displayFileMapping(data, fileIndex) {
         // 延迟一下确保DOM更新完成
         setTimeout(() => {
             updateMappingWarnings();
+            updateUnmappedFieldsNotification();
         }, 100);
     }
 }

@@ -145,6 +145,19 @@
                             <h3>字段映射</h3>
                             <p class="help-text">系统将自动分析表格并匹配字段，您可以手动调整不确定的映射</p>
 
+                            <!-- 未映射字段提醒 -->
+                            <div id="unmappedFieldsNotification" class="notification warning-notification" style="display: none;">
+                                <div class="notification-icon">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M12 9V14M12 17.5V18M12 3L4 5V11.5C4 15.6459 7.11566 20.0848 12 22C16.8843 20.0848 20 15.6459 20 11.5V5L12 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
+                                <div class="notification-content">
+                                    <div class="notification-message">注意：当前模板中有未映射的字段</div>
+                                    <div id="unmappedFieldsList" class="unmapped-fields-list"></div>
+                                </div>
+                            </div>
+
                             <div class="analysis-progress" id="analysisProgress">
                                 <div class="progress-bar">
                                     <div class="progress-fill"></div>

@@ -164,7 +164,22 @@ def detect_column_type(series):
     return "text"
 
 def convert_value(value, target_type):
-    """Convert a value to the target data type"""
+    """
+    转换一个值到目标数据类型，使用Babel库处理金融数字格式
+    
+    Args:
+        value: 要转换的原始值
+        target_type: 目标数据类型 ("int", "float", "date", "time", "text")
+        
+    Returns:
+        转换后的值，如果转换失败则抛出异常
+    """
+    from babel.numbers import parse_decimal
+    import pandas as pd
+    import sys
+    import math
+    
+    # 处理空值
     if pd.isna(value):
         return None
 
@@ -177,26 +192,62 @@ def convert_value(value, target_type):
         if target_type == "int":
             # 尝试转换为整数
             try:
-                # 先转为浮点，再转为整数
-                int_value = int(float(value))
+                # 使用Babel解析数字，支持各种格式的金融数字
+                # 默认使用英语区域格式 (如 "1,234.56")
+                try:
+                    parsed_value = parse_decimal(value, locale='en_US')
+                    int_value = int(parsed_value)
+                except:
+                    # 如果Babel解析失败，尝试使用其他区域格式
+                    try:
+                        # 尝试中文区域格式
+                        parsed_value = parse_decimal(value, locale='zh_CN') 
+                        int_value = int(parsed_value)
+                    except:
+                        # 如果还是失败，尝试直接清除常见的分隔符
+                        cleaned_value = value.replace(',', '').replace(' ', '')
+                        int_value = int(float(cleaned_value))
+                
                 # 检查是否是大整数，如果是，则返回字符串
                 if abs(int_value) > 9223372036854775807:  # SQLite INTEGER最大值
                     print(f"警告：整数值 {int_value} 太大，将以字符串形式存储", file=sys.stderr, flush=True)
-                    return value  # 直接返回字符串形式
+                    return str(int_value)  # 返回不带分隔符的字符串形式
                 return int_value
             except ValueError as e:
                 # 如果无法转换，尝试清理可能的非数字字符后再转换
-                cleaned_value = ''.join(c for c in value if c.isdigit() or c == '-')
+                cleaned_value = ''.join(c for c in value if c.isdigit() or c == '-' or c == '.')
                 if cleaned_value:
                     try:
+                        # 如果包含小数点，先转为浮点数再转为整数
+                        if '.' in cleaned_value:
+                            return int(float(cleaned_value))
                         return int(cleaned_value)
                     except ValueError:
                         # 如果仍然失败，抛出原始异常
-                        raise e
+                        raise ValueError(f"无法将值 '{value}' 转换为整数: {str(e)}")
                 else:
-                    raise e
+                    raise ValueError(f"无法将值 '{value}' 转换为整数: 没有有效数字")
+        
         elif target_type == "float":
-            return float(value)
+            # 尝试使用Babel解析金融格式的浮点数
+            try:
+                # 首先尝试英语区域格式
+                return float(parse_decimal(value, locale='en_US'))
+            except:
+                try:
+                    # 尝试中文区域格式
+                    return float(parse_decimal(value, locale='zh_CN'))
+                except:
+                    # 如果Babel解析失败，尝试手动清理常见分隔符
+                    cleaned_value = value.replace(',', '').replace(' ', '')
+                    try:
+                        # 处理特殊的百分比格式
+                        if cleaned_value.endswith('%'):
+                            return float(cleaned_value.rstrip('%')) / 100
+                        return float(cleaned_value)
+                    except ValueError:
+                        raise ValueError(f"无法将值 '{value}' 转换为浮点数")
+        
         elif target_type == "date":
             # 处理可能带有小数点的日期值（如"20210610.0"）
             if '.' in value:
@@ -212,6 +263,7 @@ def convert_value(value, target_type):
                 return parsed_date
             # 如果解析失败，抛出异常
             raise ValueError(f"无法将值 '{value}' 转换为日期格式")
+        
         elif target_type == "time":
             # 使用增强的时间解析功能
             from simple_date_utils import parse_time
@@ -220,12 +272,19 @@ def convert_value(value, target_type):
                 return parsed_time
             # 如果解析失败，抛出异常
             raise ValueError(f"无法将值 '{value}' 转换为时间格式")
+        
         else:
+            # 对于文本类型，直接返回字符串
             return value
+    
     except Exception as e:
-        # 转换失败时抛出异常，而不是返回原始值
-        raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
-
+        # 转换失败时抛出异常，包含原始错误信息
+        if isinstance(e, ValueError) and str(e).startswith("无法将值"):
+            # 已经是自定义的错误消息，直接抛出
+            raise e
+        else:
+            # 转换为更友好的错误消息
+            raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
 # API Routes
 @app.route('/api/ping', methods=['GET'])
 def ping():
@@ -725,6 +784,8 @@ def process_dataframe_chunk(df, file_path, start_row, column_mappings):
 
 def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
     """将映射数据和被拒绝的行插入数据库"""
+    import math  # 添加math模块导入
+    
     try:
         # 插入映射数据
         if mapped_data and len(mapped_data) > 0:
@@ -744,11 +805,17 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
                 # 构建插入查询
                 columns = list(row.keys())
                 values = [row[col] for col in columns]
+                
+                # 使用INSERT OR IGNORE语法，忽略已存在的ID
+                # 这将跳过任何违反唯一约束的插入操作，而不是引发错误
                 placeholders = ", ".join(["?" for _ in columns])
-                insert_query = f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})"
+                insert_query = f"INSERT OR IGNORE INTO transactions ({', '.join(columns)}) VALUES ({placeholders})"
                 
                 try:
                     cursor.execute(insert_query, values)
+                    # 如果没有插入行（因为ID已存在），可以选择记录一条警告
+                    if cursor.rowcount == 0:
+                        print(f"警告: ID为 {row.get('ID', '未知')} 的记录已存在，已跳过", file=sys.stderr, flush=True)
                 except sqlite3.Error as sql_error:
                     print(f"SQL错误(插入映射数据): {str(sql_error)}", file=sys.stderr, flush=True)
                     print(f"问题数据类型: {[type(v) for v in values]}", file=sys.stderr, flush=True)
@@ -876,7 +943,6 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
     except Exception as e:
         print(f"插入数据错误: {str(e)}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
-
 @app.route('/api/query-database', methods=['POST'])
 def query_database():
     """Query the database with filters and sorting"""
