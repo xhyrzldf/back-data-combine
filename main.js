@@ -1,17 +1,104 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+// ==================== ESM兼容层（必须放在最开始）====================
+// 在任何require语句之前引入ESM兼容性补丁
+const Module = require('module');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+
+const iconv = require('iconv-lite');
+
+// 保存原始的require
+const originalRequire = Module.prototype.require;
+
+// 检查某个路径是否为ES模块
+function isEsmModule(modulePath) {
+  const esmModules = ['is-obj', 'conf', 'dot-prop', 'type-fest'];
+  return esmModules.some(mod => modulePath.includes(mod));
+}
+
+// 创建兼容性实现
+const isObjCompat = (value) => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+};
+
+// 重写require函数
+Module.prototype.require = function patched(id) {
+  if (isEsmModule(id)) {
+    console.log(`[ESM兼容] 拦截到ESM模块导入: ${id}`);
+    
+    if (id.includes('is-obj')) {
+      return isObjCompat;
+    }
+  }
+  
+  // 使用原始require处理其他模块
+  return originalRequire.apply(this, arguments);
+};
+
+// ==================== 自定义Store实现 ====================
+class CustomStore {
+  constructor(options = {}) {
+    this.options = options;
+    this.filename = options.name || 'config';
+    this.data = {};
+    
+    try {
+      this.appData = app ? app.getPath('userData') : 
+        path.join(process.env.APPDATA || process.env.HOME, '.config');
+      this.filePath = path.join(this.appData, `${this.filename}.json`);
+      this.load();
+    } catch (err) {
+      console.error('初始化配置存储失败:', err);
+    }
+  }
+
+  load() {
+    try {
+      if (fs.existsSync(this.filePath)) {
+        const data = fs.readFileSync(this.filePath, 'utf8');
+        this.data = JSON.parse(data);
+      }
+    } catch (err) {
+      console.error('加载配置失败:', err);
+    }
+    return this.data;
+  }
+
+  save() {
+    try {
+      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2));
+    } catch (err) {
+      console.error('保存配置失败:', err);
+    }
+  }
+
+  get(key) {
+    return key ? this.data[key] : this.data;
+  }
+
+  set(key, value) {
+    if (typeof key === 'object') {
+      Object.assign(this.data, key);
+    } else {
+      this.data[key] = value;
+    }
+    this.save();
+    return this;
+  }
+}
+
+// ==================== 主程序代码 ====================
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const os = require('os');
 const si = require('systeminformation');
-const Store = require('electron-store');
 const isDev = process.env.NODE_ENV === 'development';
 
-// 存储应用配置和授权数据
+// 使用自定义Store替代electron-store
+const Store = CustomStore;
 const store = new Store({
-  encryptionKey: 'your-encryption-key-here', // 加密密钥，确保安全
-  name: 'app-config'
+  name: 'app-config',
+  encryptionKey: 'your-encryption-key-here'
 });
 
 // 全局变量
@@ -24,7 +111,7 @@ let hardwareId = null;
 
 // 添加到IPC处理程序
 ipcMain.handle('is-development-mode', () => {
-    return isDev;
+  return isDev;
 });
 
 // 检查应用程序是否过期
@@ -90,33 +177,6 @@ function verifyHardwareId(currentId) {
 
 // 启动Python后端
 function startBackend() {
-  // 确定Python可执行文件的路径
-  let pythonExecutable;
-  let scriptPath;
-  
-  if (app.isPackaged) {
-    // 在打包的应用中，使用bundled的Python和脚本
-    pythonExecutable = path.join(process.resourcesPath, 'backend', 'python.exe');
-    scriptPath = path.join(process.resourcesPath, 'backend', 'backend.py');
-  } else {
-    // 在开发模式下，使用相对路径
-    pythonExecutable = 'python';
-    scriptPath = path.join(__dirname, 'backend', 'backend.py');
-  }
-  
-  // 检查文件是否存在
-  if (app.isPackaged && !fs.existsSync(pythonExecutable)) {
-    dialog.showErrorBox('错误', '找不到Python可执行文件');
-    app.quit();
-    return;
-  }
-  
-  if (!fs.existsSync(scriptPath)) {
-    dialog.showErrorBox('错误', '找不到后端脚本文件');
-    app.quit();
-    return;
-  }
-  
   // 准备环境变量：加入硬件ID和过期日期
   const env = {
     ...process.env,
@@ -126,31 +186,66 @@ function startBackend() {
     DEV_MODE: isDev ? "true" : "false"
   };
   
-  // 启动Python进程
-  console.log(`启动后端: ${pythonExecutable} ${scriptPath}`);
-  backendProcess = spawn(pythonExecutable, [scriptPath], { env });
+  // 根据应用是否打包决定使用哪个后端可执行文件
+  if (app.isPackaged) {
+    // 在打包的应用中，使用打包的后端可执行文件
+    const backendExecutable = path.join(process.resourcesPath, 'backend_dist', 'backend_exe.exe');
+    
+    // 检查可执行文件是否存在
+    if (!fs.existsSync(backendExecutable)) {
+      dialog.showErrorBox('错误', `找不到后端可执行文件: ${backendExecutable}`);
+      app.quit();
+      return;
+    }
+    
+    console.log(`启动后端可执行文件: ${backendExecutable}`);
+    
+    // 启动打包后的后端程序，传递开发模式参数
+    backendProcess = spawn(backendExecutable, ['dev'], { env });
+  } else {
+    // 在开发模式下，使用Python脚本
+    const pythonExecutable = 'python';
+    const scriptPath = path.join(__dirname, 'backend', 'backend.py');
+    
+    // 检查脚本文件是否存在
+    if (!fs.existsSync(scriptPath)) {
+      dialog.showErrorBox('错误', `找不到后端脚本文件: ${scriptPath}`);
+      app.quit();
+      return;
+    }
+    
+    console.log(`启动后端脚本: ${pythonExecutable} ${scriptPath}`);
+    
+    // 启动Python进程，传递开发模式参数
+    backendProcess = spawn(pythonExecutable, [scriptPath, 'dev'], { env });
+  }
   
-  // 处理后端输出
   backendProcess.stdout.on('data', (data) => {
-    console.log(`后端输出: ${data}`);
-    // 可以在这里检测后端是否准备好接受连接
+    console.log(`后端输出: ${iconv.decode(data, 'gbk')}`);
   });
   
-  // 处理后端错误
   backendProcess.stderr.on('data', (data) => {
-    console.error(`后端错误: ${data}`);
-    // 可以将重要错误信息转发到渲染进程显示给用户
+    console.error(`后端错误: ${iconv.decode(data, 'gbk')}`);
+    
+    // 将重要错误信息转发到渲染进程显示给用户
     if (mainWindow) {
-      mainWindow.webContents.send('backend-error', data.toString());
+      mainWindow.webContents.send('backend-error', iconv.decode(data, 'gbk'));
     }
   });
   
   // 处理后端退出
   backendProcess.on('close', (code) => {
     console.log(`后端进程退出，代码: ${code}`);
-    if (code !== 0) {
+    if (code !== 0 && code !== null) {
       dialog.showErrorBox('后端错误', `后端进程意外退出，代码: ${code}`);
     }
+    backendProcess = null;
+  });
+  
+  // 处理意外错误
+  backendProcess.on('error', (err) => {
+    console.error(`启动后端进程时出错: ${err.message}`);
+    dialog.showErrorBox('启动错误', `无法启动后端进程: ${err.message}`);
     backendProcess = null;
   });
 }
@@ -169,7 +264,7 @@ async function createWindow() {
   
   // 检查过期状态
   appExpired = checkExpiration();
-  if (appExpired) {
+  if (appExpired && !isDev) {  // 在开发模式下忽略过期
     dialog.showErrorBox('应用已过期', '此应用程序的授权已过期，无法继续使用。');
     app.quit();
     return;
@@ -210,7 +305,7 @@ async function createWindow() {
   });
 
   // 在开发模式下自动打开开发者工具
-  if (process.env.NODE_ENV === 'development') {
+  if (isDev) {
     mainWindow.webContents.openDevTools();
   }
   

@@ -1827,7 +1827,7 @@ def find_available_port(start_port, max_attempts=10):
 if __name__ == '__main__':
     # 检查是否有开发模式参数
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'dev':
-        print("启动开发模式，跳过验证...", file=sys.stderr)
+        print("启动开发模式，跳过验证...")
         # 在开发模式下直接启动
         app.run(host='127.0.0.1', port=51234, debug=True)
     else:
