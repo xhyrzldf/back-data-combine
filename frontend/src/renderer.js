@@ -2114,53 +2114,68 @@ function stringSimilarity(str1, str2) {
     return 1.0 - matrix[len1][len2] / maxLen;
 }
 
-// Save a manually fixed rejected row
-// Save a manually fixed rejected row
 async function saveRejectedRow() {
     if (!currentRejectedRow) return;
 
     try {
-        // 获取所有编辑字段，而不仅仅是第一个
+        // 获取所有编辑字段
         const editFields = elements.rowEditorFields.querySelectorAll('.edit-field');
         if (!editFields || editFields.length === 0) {
             alert('未找到可编辑字段');
             return;
         }
         
-        // 创建全新的数据对象
+        // 创建数据对象
         const fixedData = {};
         
         // 添加基本信息
         fixedData["source_file"] = String(currentRejectedRow.source_file || '');
-        fixedData["row_number"] = parseInt(currentRejectedRow.row_number || 0, 10);
+        fixedData["row_number"] = String(currentRejectedRow.row_number || '0');
         
-        // 收集所有修改后的字段值
-        let hasValues = false;
+        // 关键修改：添加原始ID (从raw_data中获取)
+        try {
+            // 尝试从raw_data中提取原始ID
+            if (currentRejectedRow.raw_data) {
+                let rawData = currentRejectedRow.raw_data;
+                if (typeof rawData === 'string') {
+                    rawData = JSON.parse(rawData);
+                }
+                
+                // 查找可能的ID字段
+                for (const key in rawData) {
+                    if (key.toUpperCase() === 'ID' || key.includes('序号') || key.includes('编号')) {
+                        fixedData["ID"] = String(rawData[key]);
+                        console.log(`已保留原始ID: ${fixedData["ID"]}`);
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('提取原始ID失败:', e);
+        }
+        
+        // 收集用户编辑的字段值
         editFields.forEach(field => {
             if (!field.name) return;
             
             const fieldValue = field.value.trim();
             if (fieldValue) {
-                // 根据字段类型进行适当的转换
-                if (field.type === 'number') {
-                    // 对数值进行处理
+                // 特殊处理ID字段，确保是字符串
+                if (field.name === 'ID') {
+                    fixedData[field.name] = String(fieldValue);
+                } 
+                // 其他字段的处理逻辑保持不变
+                else if (field.type === 'number') {
                     if (field.step === '1') {
                         fixedData[field.name] = parseInt(fieldValue, 10);
                     } else {
                         fixedData[field.name] = parseFloat(fieldValue);
                     }
                 } else {
-                    // 文本、日期、时间等保持字符串形式
                     fixedData[field.name] = fieldValue;
                 }
-                hasValues = true;
             }
         });
-        
-        if (!hasValues) {
-            alert('请至少输入一个值');
-            return;
-        }
         
         console.log('发送更新数据:', fixedData);
         

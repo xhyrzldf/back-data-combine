@@ -1128,9 +1128,6 @@ def get_rejected_rows():
         traceback.print_exc(file=sys.stderr)
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 修改 process_rejected_row 函数，确保 ID 字段始终以字符串形式存储
-# 在 backend.py 中查找并替换 process_rejected_row 函数
-
 @app.route('/api/process-rejected-row', methods=['POST'])
 def process_rejected_row():
     """Process a manually fixed rejected row"""
@@ -1171,10 +1168,11 @@ def process_rejected_row():
             source_file = fixed_data.get("source_file") or row_dict.get("source_file")
             row_number = fixed_data.get("row_number") or row_dict.get("row_number")
             
-            # 获取原始数据作为JSON
+            # 获取原始数据和映射关系
             raw_data_str = row_dict.get('raw_data')
             original_data = {}
             
+            # 1. 获取原始数据
             try:
                 if raw_data_str:
                     # 预处理可能导致问题的值
@@ -1193,6 +1191,55 @@ def process_rejected_row():
             except Exception as e:
                 print(f"解析原始数据失败: {str(e)}", file=sys.stderr, flush=True)
             
+            # 2. 找出原始数据中应映射到ID的字段和值
+            mapped_id_field = None
+            id_value = None
+            
+            # 2A. 首先查询已处理的行，找出ID映射
+            try:
+                cursor.execute("""
+                    SELECT * FROM transactions 
+                    WHERE source_file = ? AND ID IS NOT NULL AND ID != 'NaN'
+                    LIMIT 10
+                """, (source_file,))
+                
+                existing_rows = cursor.fetchall()
+                if existing_rows:
+                    print(f"找到同一文件的 {len(existing_rows)} 个已处理行", file=sys.stderr, flush=True)
+                    
+                    # 获取列名
+                    columns = [desc[0] for desc in cursor.description]
+                    id_column_index = columns.index('ID') if 'ID' in columns else -1
+                    
+                    if id_column_index >= 0:
+                        # 收集已处理行的ID值
+                        processed_ids = [row[id_column_index] for row in existing_rows 
+                                        if row[id_column_index] and row[id_column_index] != 'NaN']
+                        
+                        if processed_ids:
+                            print(f"已处理行的ID值: {processed_ids[:3]}...", file=sys.stderr, flush=True)
+                            
+                            # 尝试匹配原始数据中哪个字段值与已处理的ID相符
+                            for orig_field, value in original_data.items():
+                                if value is not None and str(value) != 'NaN':
+                                    str_value = str(value)
+                                    if str_value in [str(pid) for pid in processed_ids]:
+                                        mapped_id_field = orig_field
+                                        id_value = str_value
+                                        print(f"找到ID字段映射: {mapped_id_field} -> ID = {id_value}", 
+                                             file=sys.stderr, flush=True)
+                                        break
+            except Exception as e:
+                print(f"查询已处理行失败: {str(e)}", file=sys.stderr, flush=True)
+            
+            # 2B. 如果在本行原始数据中找到ID映射，使用该值
+            if mapped_id_field and id_value:
+                print(f"使用原始数据中映射的ID: {id_value} (来自字段: {mapped_id_field})", file=sys.stderr, flush=True)
+            # 2C. 如果用户提供了非NaN的ID值，则使用它
+            elif 'ID' in fixed_data and fixed_data['ID'] is not None and fixed_data['ID'] != 'NaN':
+                id_value = str(fixed_data['ID'])
+                print(f"使用用户提供的ID值: {id_value}", file=sys.stderr, flush=True)
+            
             # 查找是否已存在这个行的数据
             cursor.execute(
                 "SELECT * FROM transactions WHERE source_file = ? AND row_number = ?", 
@@ -1201,21 +1248,36 @@ def process_rejected_row():
             existing_row = cursor.fetchone()
             
             if existing_row:
-                # 如果已存在，执行更新
+                # 如果已存在，只更新用户明确修改的非NaN字段
                 for field, value in fixed_data.items():
                     if field in ["source_file", "row_number"]:
                         continue  # 跳过这些字段
                     
-                    # 特殊处理ID字段，始终以字符串形式存储
-                    if field == "ID" and value is not None:
-                        value = str(value)
+                    # 跳过NaN值，除非这是用户明确想要设置的
+                    if value == 'NaN' and field != row_dict.get('column_name'):
+                        print(f"跳过字段 {field} 的NaN值", file=sys.stderr, flush=True)
+                        continue
+                    
+                    # 特殊处理ID字段
+                    if field == "ID":
+                        if value == 'NaN' and id_value:
+                            # 如果用户提交的ID是NaN但我们有更好的ID，跳过更新
+                            print(f"保留现有ID值，不更新为NaN", file=sys.stderr, flush=True)
+                            continue
+                        elif value is not None:
+                            value = str(value)
                     
                     # 更新字段值
-                    cursor.execute(
-                        f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
-                        (value, source_file, row_number)
-                    )
+                    try:
+                        cursor.execute(
+                            f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
+                            (value, source_file, row_number)
+                        )
+                        print(f"更新字段: {field} = {value}", file=sys.stderr, flush=True)
+                    except sqlite3.Error as e:
+                        print(f"更新字段 {field} 失败: {str(e)}", file=sys.stderr, flush=True)
             else:
+                # 如果不存在，需要创建新行
                 # 获取合适的模板
                 current_template = {}
                 
@@ -1224,10 +1286,6 @@ def process_rejected_row():
                     current_template = templates[template_name]
                     print(f"使用前端指定模板: {template_name}", file=sys.stderr, flush=True)
                 # 否则使用默认模板
-                elif default_template:
-                    current_template = templates[default_template]
-                    print(f"使用默认模板: {default_template}", file=sys.stderr, flush=True)
-                # 如果以上都失败，使用第一个可用模板
                 elif templates:
                     first_template_name = next(iter(templates))
                     current_template = templates[first_template_name]
@@ -1235,16 +1293,7 @@ def process_rejected_row():
                 else:
                     print("警告: 没有可用模板", file=sys.stderr, flush=True)
                 
-                # 如果不存在，需要创建完整的行数据
-                full_data = {}
-                
-                # 1. 首先从模板获取所有可能的字段
-                template_fields = []
-                for template in templates.values():
-                    template_fields.extend(list(template.keys()))
-                template_fields = list(set(template_fields))  # 去重
-                
-                # 2. 从原始数据中提取值
+                # 准备数据
                 all_columns = []
                 all_values = []
                 
@@ -1255,15 +1304,12 @@ def process_rejected_row():
                 all_values.append(row_number)
                 
                 # 从原始数据中提取值
-                target_column = row_dict.get('target_column')
-                column_name = row_dict.get('column_name')
-                if target_column and column_name and column_name in original_data:
-                    # 这是我们要修复的字段的原始值
-                    original_value = original_data.get(column_name)
+                if original_data:
+                    column_name = row_dict.get('column_name')  # 出错的列名
                     
                     # 对原始数据中的所有字段进行转换
                     for orig_col, value in original_data.items():
-                        # 跳过我们要修复的字段（将使用fixed_data中的值）
+                        # 跳过出错的列（将使用fixed_data中的值）
                         if orig_col == column_name:
                             continue
                             
@@ -1297,14 +1343,23 @@ def process_rejected_row():
                                         target_type = t_info[mapped_column]["type"]
                                         break
                                 
-                                # 特殊处理ID字段，始终以字符串形式存储
-                                if mapped_column == "ID" and value is not None:
-                                    value = str(value)
-                                    all_columns.append(mapped_column)
-                                    all_values.append(value)
+                                # 特殊处理ID字段
+                                if mapped_column == "ID":
+                                    # 如果这是映射到ID的字段，使用我们找到的id_value
+                                    if orig_col == mapped_id_field and id_value:
+                                        if "ID" not in all_columns:  # 确保只添加一次
+                                            all_columns.append("ID")
+                                            all_values.append(id_value)
+                                            print(f"添加映射的ID字段: {id_value}", file=sys.stderr, flush=True)
+                                    # 否则使用原始值(如果不是NaN)
+                                    elif value is not None and str(value) != 'NaN':
+                                        if "ID" not in all_columns:  # 确保只添加一次
+                                            all_columns.append("ID")
+                                            all_values.append(str(value))
+                                            print(f"添加原始ID字段: {value}", file=sys.stderr, flush=True)
                                     continue
-                                        
-                                # 尝试转换值
+                                
+                                # 尝试转换其他字段的值
                                 converted_value = convert_value(value, target_type)
                                 if converted_value is not None:
                                     all_columns.append(mapped_column)
@@ -1312,10 +1367,15 @@ def process_rejected_row():
                             except Exception as e:
                                 print(f"转换字段 {orig_col} 失败: {str(e)}", file=sys.stderr, flush=True)
                 
-                # 3. 添加用户修改的字段值
+                # 添加用户修改的字段值，但忽略NaN值的ID
                 for field, value in fixed_data.items():
                     if field in ["source_file", "row_number"]:
                         continue  # 已添加
+                    
+                    # 对于ID字段，如果是NaN且我们有更好的ID值，则跳过
+                    if field == "ID" and (value == 'NaN' or value is None) and id_value:
+                        print(f"忽略用户提交的NaN ID值，保留映射的ID: {id_value}", file=sys.stderr, flush=True)
+                        continue
                         
                     # 特殊处理ID字段，始终以字符串形式存储
                     if field == "ID" and value is not None:
@@ -1329,7 +1389,13 @@ def process_rejected_row():
                         all_columns.append(field)
                         all_values.append(value)
                 
-                # 4. 插入完整的行数据
+                # 检查是否需要添加ID字段(如果尚未添加)
+                if "ID" not in all_columns and id_value:
+                    all_columns.append("ID")
+                    all_values.append(id_value)
+                    print(f"补充添加ID字段: {id_value}", file=sys.stderr, flush=True)
+                
+                # 插入完整的行数据
                 if all_columns:
                     placeholders = ", ".join(["?" for _ in all_columns])
                     try:
@@ -1340,19 +1406,32 @@ def process_rejected_row():
                         print(f"成功插入完整行数据: 字段={all_columns}, 值={all_values}", file=sys.stderr, flush=True)
                     except sqlite3.Error as e:
                         print(f"插入完整行数据失败: {str(e)}", file=sys.stderr, flush=True)
-                        # 回退到只插入修改的字段
-                        columns = list(fixed_data.keys())
-                        values = [fixed_data[col] for col in columns]
+                        # 回退到只插入修改的非NaN字段
+                        columns = []
+                        values = []
                         
-                        # 特殊处理ID字段，确保以字符串形式存储
-                        for i, col in enumerate(columns):
-                            if col == "ID" and values[i] is not None:
-                                values[i] = str(values[i])
+                        for field, value in fixed_data.items():
+                            # 跳过NaN值的ID字段
+                            if field == "ID" and (value == 'NaN' or value is None) and id_value:
+                                continue
+                                
+                            # 添加有效字段
+                            columns.append(field)
+                            if field == "ID" and value is not None:
+                                values.append(str(value))
+                            else:
+                                values.append(value)
                         
-                        if "source_file" not in fixed_data:
+                        # 添加ID(如果不存在)
+                        if "ID" not in columns and id_value:
+                            columns.append("ID")
+                            values.append(id_value)
+                        
+                        # 添加必要字段
+                        if "source_file" not in columns:
                             columns.append("source_file")
                             values.append(source_file)
-                        if "row_number" not in fixed_data:
+                        if "row_number" not in columns:
                             columns.append("row_number")
                             values.append(row_number)
                         
@@ -1361,30 +1440,7 @@ def process_rejected_row():
                             f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
                             values
                         )
-                        print(f"回退方案: 仅插入修改字段: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
-                else:
-                    # 使用原来的方式作为备选
-                    columns = list(fixed_data.keys())
-                    values = [fixed_data[col] for col in columns]
-                    
-                    # 特殊处理ID字段，确保以字符串形式存储
-                    for i, col in enumerate(columns):
-                        if col == "ID" and values[i] is not None:
-                            values[i] = str(values[i])
-                    
-                    if "source_file" not in fixed_data:
-                        columns.append("source_file")
-                        values.append(source_file)
-                    if "row_number" not in fixed_data:
-                        columns.append("row_number")
-                        values.append(row_number)
-                    
-                    placeholders = ", ".join(["?" for _ in columns])
-                    cursor.execute(
-                        f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
-                        values
-                    )
-                    print(f"备选方案: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
+                        print(f"回退方案: 插入字段: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
 
             # Delete the rejected row
             cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
