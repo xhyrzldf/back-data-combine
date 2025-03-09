@@ -11,8 +11,11 @@ let showRecentFiles = true;
 let modalStack = [];
 let templateMemory = {};
 
-// API Base URL
-const API_BASE_URL = 'http://localhost:5000/api';
+// 修改API Base URL部分
+let backendPort = 51234; // 默认端口
+let API_BASE_URL = `http://localhost:${backendPort}/api`;
+let isDevelopmentMode = false; // 开发模式标志
+
 
 // DOM Elements
 const elements = {
@@ -121,19 +124,112 @@ const elements = {
     overlay: document.getElementById('overlay')
 };
 
-// 初始化应用程序
+function isDevModeEnabled() {
+    // 检查URL参数
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('dev')) {
+        console.log("通过URL参数启用开发模式");
+        // 保存到localStorage以便记住设置
+        localStorage.setItem('devMode', 'true');
+        return true;
+    }
+    
+    // 检查localStorage
+    if (localStorage.getItem('devMode') === 'true') {
+        console.log("通过localStorage启用开发模式");
+        return true;
+    }
+    
+    // 检查从主进程获取的状态
+    if (isDevelopmentMode) {
+        console.log("通过主进程环境变量启用开发模式");
+        return true;
+    }
+    
+    // 检查是否在localhost上运行
+    if (window.location.hostname === 'localhost') {
+        console.log("在localhost上运行，自动启用开发模式");
+        return true;
+    }
+    
+    return false;
+}
+
 async function initApp() {
-    // 检查后端是否运行
+    // 检测开发模式
+    try {
+        isDevelopmentMode = window.electronAPI.isDevelopmentMode ?
+            await window.electronAPI.isDevelopmentMode() : false;
+    } catch (error) {
+        console.warn('无法获取开发模式状态:', error);
+    }
+    
+    const devModeActive = isDevModeEnabled();
+    console.log("开发模式状态:", devModeActive ? "启用" : "禁用");
+    
+    // 添加开发模式指示器
+    if (devModeActive) {
+        addDevModeIndicator();
+    }
+
+    // 尝试从主进程获取后端端口
+    try {
+        backendPort = await window.electronAPI.getBackendPort();
+        API_BASE_URL = `http://localhost:${backendPort}/api`;
+    } catch (error) {
+        console.warn('无法获取后端端口，使用默认端口:', error);
+    }
+
+    // 检查后端是否运行并处理过期状态
     try {
         const response = await fetch(`${API_BASE_URL}/ping`);
         const data = await response.json();
+        
+        if (data.status === 'warning' && !devModeActive) {
+            // 处理警告（仅在非开发模式时）
+            if (data.message === '应用已过期') {
+                showExpirationMessage('应用授权已过期，无法继续使用。');
+                return;
+            } else if (data.message === '硬件验证失败') {
+                showExpirationMessage('此应用无法在当前硬件上运行。');
+                return;
+            }
+        } else if (data.status === 'warning' && devModeActive) {
+            // 开发模式下显示警告但继续执行
+            console.warn(`开发模式警告: ${data.message}`);
+            showDevelopmentWarning(data.message);
+        }
 
-        if (data.status !== 'success') {
-            alert('无法连接到后端服务器。请重启应用程序。');
-            return;
+        if (data.status !== 'success' && data.status !== 'warning') {
+            // 尝试在不同端口重试
+            let found = false;
+            for (let port = 51234; port < 51244; port++) {
+                if (port === backendPort) continue;
+                
+                try {
+                    const testUrl = `http://localhost:${port}/api/ping`;
+                    const testResponse = await fetch(testUrl);
+                    const testData = await testResponse.json();
+                    
+                    if (testData.status === 'success' || (isDevelopmentMode && testData.status === 'warning')) {
+                        backendPort = port;
+                        API_BASE_URL = `http://localhost:${port}/api`;
+                        found = true;
+                        break;
+                    }
+                } catch (e) {
+                    // 忽略连接错误
+                }
+            }
+            
+            if (!found) {
+                // 如果所有尝试都失败，显示错误消息
+                showBackendErrorMessage('无法连接到后端服务器。请重启应用程序。');
+                return;
+            }
         }
     } catch (error) {
-        alert('无法连接到后端服务器。请重启应用程序。');
+        showBackendErrorMessage('无法连接到后端服务器。请重启应用程序。');
         return;
     }
 
@@ -156,6 +252,223 @@ async function initApp() {
     if (notificationEl) {
         notificationEl.style.display = 'none';
     }
+}
+
+function addDevModeIndicator() {
+    const indicator = document.createElement('div');
+    indicator.className = 'dev-mode-indicator';
+    indicator.textContent = "开发模式";
+    indicator.style = `
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        background-color: #ff9800;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        z-index: 9999;
+        opacity: 0.7;
+    `;
+    document.body.appendChild(indicator);
+}
+
+function showDevelopmentWarning(message) {
+    const warningEl = document.createElement('div');
+    warningEl.className = 'development-warning';
+    warningEl.innerHTML = `
+        <div class="warning-content">
+            <strong>开发模式:</strong> ${message}
+            <button id="dismissWarningBtn" class="btn small">了解</button>
+        </div>
+    `;
+    
+    // 添加样式
+    const style = document.createElement('style');
+    style.textContent = `
+        .development-warning {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: #FFF3CD;
+            border: 1px solid #FFEEBA;
+            border-left: 4px solid #FF9800;
+            color: #856404;
+            padding: 12px 16px;
+            border-radius: 4px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            max-width: 300px;
+        }
+        .warning-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        #dismissWarningBtn {
+            background-color: transparent;
+            border: 1px solid #856404;
+            color: #856404;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+    `;
+    
+    document.head.appendChild(style);
+    document.body.appendChild(warningEl);
+    
+    // 添加关闭按钮事件
+    document.getElementById('dismissWarningBtn').addEventListener('click', () => {
+        warningEl.remove();
+    });
+    
+    // 自动隐藏
+    setTimeout(() => {
+        if (document.body.contains(warningEl)) {
+            warningEl.style.opacity = '0';
+            warningEl.style.transition = 'opacity 0.5s';
+            setTimeout(() => warningEl.remove(), 500);
+        }
+    }, 8000);
+}
+
+// 显示过期消息
+function showExpirationMessage(message) {
+    // 隐藏所有屏幕
+    document.querySelectorAll('.screen').forEach(screen => {
+        screen.classList.remove('active');
+    });
+    
+    // 创建过期消息容器
+    const expirationEl = document.createElement('div');
+    expirationEl.className = 'expiration-message';
+    expirationEl.innerHTML = `
+        <div class="expiration-icon">❌</div>
+        <h2>授权验证失败</h2>
+        <p>${message}</p>
+        <p>请联系软件提供商获取支持。</p>
+        <button id="closeAppBtn" class="btn danger">关闭应用</button>
+    `;
+    
+    // 添加样式
+    const style = document.createElement('style');
+    style.textContent = `
+        .expiration-message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            z-index: 1000;
+        }
+        .expiration-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .expiration-message h2 {
+            margin-bottom: 16px;
+            color: #FF3B30;
+        }
+        .expiration-message p {
+            margin-bottom: 16px;
+            font-size: 16px;
+        }
+    `;
+    
+    document.head.appendChild(style);
+    document.body.appendChild(expirationEl);
+    
+    // 添加关闭按钮事件
+    document.getElementById('closeAppBtn').addEventListener('click', () => {
+        window.electronAPI.closeWindow();
+    });
+}
+
+// 显示后端错误消息
+function showBackendErrorMessage(message) {
+    // 检查是否已经显示了错误消息
+    if (document.querySelector('.backend-error-message')) {
+        return;
+    }
+    
+    // 创建错误消息容器
+    const errorEl = document.createElement('div');
+    errorEl.className = 'backend-error-message';
+    errorEl.innerHTML = `
+        <div class="error-icon">⚠️</div>
+        <h2>连接错误</h2>
+        <p>${message}</p>
+        <button id="retryConnectionBtn" class="btn primary">重试连接</button>
+        <button id="closeAppBtn" class="btn secondary">关闭应用</button>
+    `;
+    
+    // 添加样式
+    const style = document.createElement('style');
+    style.textContent = `
+        .backend-error-message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            z-index: 1000;
+        }
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .backend-error-message h2 {
+            margin-bottom: 16px;
+            color: #FF9500;
+        }
+        .backend-error-message p {
+            margin-bottom: 16px;
+            font-size: 16px;
+        }
+        .backend-error-message button {
+            margin: 8px;
+        }
+    `;
+    
+    document.head.appendChild(style);
+    document.body.appendChild(errorEl);
+    
+    // 添加重试按钮事件
+    document.getElementById('retryConnectionBtn').addEventListener('click', () => {
+        errorEl.remove();
+        initApp();
+    });
+    
+    // 添加关闭按钮事件
+    document.getElementById('closeAppBtn').addEventListener('click', () => {
+        window.electronAPI.closeWindow();
+    });
+}
+
+// 修改preload.js添加必要的API
+function updatePreloadJsWithApi() {
+    // 这个只是一个提示，实际需要在preload.js中添加这些API
+    console.log('需要在preload.js中添加getBackendPort API');
+}
+
+function addBackendErrorListener() {
+    // 监听来自主进程的后端错误
+    window.electronAPI.onBackendError((error) => {
+        console.error('后端错误:', error);
+        // 如果是严重错误，显示给用户
+        if (error.includes('验证失败') || error.includes('过期') || error.includes('硬件')) {
+            showExpirationMessage(error);
+        }
+    });
 }
 
 // Load templates from backend
@@ -358,6 +671,11 @@ function addEventListeners() {
             }
         }
     });
+
+    // 添加后端错误监听
+    if (window.electronAPI && window.electronAPI.onBackendError) {
+        addBackendErrorListener();
+    }
 
     // Settings
     elements.settingsBtn.addEventListener('click', openSettings);
@@ -3611,6 +3929,37 @@ function closeRowEditor() {
     currentRejectedRow = null;
     closeModal('rowEditorModal');
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 添加开发模式切换按钮
+    setTimeout(() => {
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'dev-toggle-btn';
+        toggleBtn.textContent = localStorage.getItem('devMode') === 'true' ? 
+            "禁用开发模式" : "启用开发模式";
+        toggleBtn.style = `
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            z-index: 9999;
+            padding: 5px 10px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        `;
+        
+        toggleBtn.addEventListener('click', function() {
+            const currentMode = localStorage.getItem('devMode') === 'true';
+            localStorage.setItem('devMode', currentMode ? 'false' : 'true');
+            location.reload();
+        });
+        
+        document.body.appendChild(toggleBtn);
+    }, 1000);
+});
 
 // Initialize the application
 window.addEventListener('DOMContentLoaded', initApp);

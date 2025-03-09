@@ -14,171 +14,11 @@ import time
 from io import StringIO
 import traceback
 from simple_date_utils import parse_date
-import hashlib
-import subprocess
-import platform
-import socket
 
 # 增加Flask请求大小限制
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 设置为100MB
 CORS(app)
-
-# 验证模块 - 新增
-#---------------------------------
-def get_hardware_id():
-    """从环境变量获取硬件ID"""
-    return os.environ.get('HARDWARE_ID')
-
-def get_expiration_date():
-    """从环境变量获取过期日期"""
-    expiration_str = os.environ.get('EXPIRATION_DATE')
-    if expiration_str:
-        try:
-            return datetime.fromisoformat(expiration_str.replace('Z', '+00:00'))
-        except ValueError:
-            print(f"无效的过期日期格式: {expiration_str}", file=sys.stderr)
-    
-    # 如果未设置或格式错误，使用默认日期
-    return datetime(2024, 7, 1)
-
-def check_expiration():
-    """检查应用是否过期"""
-    # 检查是否为开发模式
-    dev_mode = os.environ.get('DEV_MODE', 'false').lower() == 'true'
-    
-    # 在开发模式下返回未过期
-    if dev_mode:
-        print("开发模式：跳过过期检查", file=sys.stderr)
-        return False
-    current_date = datetime.now()
-    expiration_date = get_expiration_date()
-    
-    # 检查系统时间是否被回调（与上次运行时间比较）
-    last_run_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.last_run')
-    
-    if os.path.exists(last_run_file):
-        try:
-            with open(last_run_file, 'r') as f:
-                last_run_str = f.read().strip()
-                last_run_date = datetime.fromisoformat(last_run_str)
-                
-                # 如果当前时间比上次运行时间早一天以上，可能是时间被回调
-                if current_date < last_run_date and (last_run_date - current_date).days > 1:
-                    print("检测到可能的时间篡改", file=sys.stderr)
-                    return True
-        except Exception as e:
-            print(f"读取上次运行时间出错: {e}", file=sys.stderr)
-    
-    # 保存当前运行时间
-    try:
-        with open(last_run_file, 'w') as f:
-            f.write(current_date.isoformat())
-    except Exception as e:
-        print(f"保存当前运行时间出错: {e}", file=sys.stderr)
-    
-    # 检查是否超过过期日期
-    return current_date >= expiration_date
-
-def get_local_hardware_fingerprint():
-    """获取本地硬件指纹（作为备份验证）"""
-    try:
-        fingerprint_components = []
-        
-        # 获取主板序列号 (Windows)
-        if platform.system() == "Windows":
-            try:
-                result = subprocess.run(["wmic", "baseboard", "get", "serialnumber"], 
-                                        capture_output=True, text=True, check=True)
-                lines = result.stdout.strip().split('\n')
-                if len(lines) >= 2:
-                    fingerprint_components.append(lines[1].strip())
-            except Exception as e:
-                print(f"获取主板序列号失败: {e}", file=sys.stderr)
-        
-        # 获取主板信息 (通用)
-        try:
-            if platform.system() == "Windows":
-                result = subprocess.run(["wmic", "baseboard", "get", "manufacturer,product"], 
-                                    capture_output=True, text=True, check=True)
-                fingerprint_components.append(result.stdout.strip())
-            elif platform.system() == "Linux":
-                result = subprocess.run(["dmidecode", "-t", "2"], 
-                                    capture_output=True, text=True, check=True)
-                fingerprint_components.append(result.stdout.strip())
-        except Exception as e:
-            print(f"获取主板信息失败: {e}", file=sys.stderr)
-        
-        # 获取CPU信息
-        try:
-            if platform.system() == "Windows":
-                result = subprocess.run(["wmic", "cpu", "get", "processorid"], 
-                                    capture_output=True, text=True, check=True)
-                lines = result.stdout.strip().split('\n')
-                if len(lines) >= 2:
-                    fingerprint_components.append(lines[1].strip())
-            elif platform.system() == "Linux":
-                with open('/proc/cpuinfo', 'r') as f:
-                    for line in f:
-                        if line.startswith('processor'):
-                            fingerprint_components.append(line.strip())
-                            break
-        except Exception as e:
-            print(f"获取CPU信息失败: {e}", file=sys.stderr)
-        
-        # 如果没有收集到足够的硬件信息，使用计算机名称和用户名
-        if len(fingerprint_components) < 2:
-            fingerprint_components.append(platform.node())
-            fingerprint_components.append(os.getlogin())
-        
-        # 计算哈希
-        fingerprint_str = '|'.join(fingerprint_components)
-        return hashlib.sha256(fingerprint_str.encode()).hexdigest()
-    
-    except Exception as e:
-        print(f"获取硬件指纹失败: {e}", file=sys.stderr)
-        return None
-
-def verify_hardware():
-    """验证当前硬件是否匹配"""
-    # 检查是否为开发模式
-    dev_mode = os.environ.get('DEV_MODE', 'false').lower() == 'true'
-    
-    # 在开发模式下返回验证通过
-    if dev_mode:
-        print("开发模式：跳过硬件验证", file=sys.stderr)
-        return True
-    # 从环境变量获取硬件ID
-    env_hardware_id = get_hardware_id()
-    
-    # 如果没有提供环境变量中的硬件ID，则跳过验证
-    if not env_hardware_id:
-        print("警告: 未提供硬件ID，跳过验证", file=sys.stderr)
-        return True
-    
-    # 获取当前硬件指纹
-    local_hardware_id = get_local_hardware_fingerprint()
-    
-    # 如果无法获取本地硬件ID，则使用一个简单的替代方案
-    if not local_hardware_id:
-        simple_id = hashlib.md5((platform.node() + platform.machine()).encode()).hexdigest()
-        return env_hardware_id == simple_id
-    
-    # 主要验证: 环境变量中的ID与本地计算的ID是否匹配
-    # 允许部分匹配以增加灵活性（对于一些特殊情况，允许首部16个字符匹配）
-    return env_hardware_id == local_hardware_id or env_hardware_id[:16] == local_hardware_id[:16]
-
-# 为所有接口添加验证层 - 新增
-def verify_request():
-    """验证请求，检查应用是否过期或硬件是否不匹配"""
-    if check_expiration():
-        return {'status': 'error', 'message': '应用授权已过期'}, 403
-    
-    if not verify_hardware():
-        return {'status': 'error', 'message': '硬件验证失败'}, 403
-    
-    return None
-#---------------------------------
 
 # 配置更详细的日志
 @app.errorhandler(Exception)
@@ -445,33 +285,16 @@ def convert_value(value, target_type):
         else:
             # 转换为更友好的错误消息
             raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
-
 # API Routes
 @app.route('/api/ping', methods=['GET'])
 def ping():
     """Simple ping endpoint to test if server is running"""
-    # 验证请求（但不拒绝ping）
-    validation = verify_request()
-    if validation:
-        # 对ping请求返回特殊的响应
-        result = {'status': 'warning'}
-        if '过期' in validation[0]['message']:
-            result['message'] = '应用已过期'
-        elif '硬件' in validation[0]['message']:
-            result['message'] = '硬件验证失败'
-        return jsonify(result)
-        
     return jsonify({"status": "success", "message": "Backend is running"})
 
 
 @app.route('/api/templates', methods=['GET'])
 def get_templates():
     """Get all templates"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     return jsonify({
         "status": "success",
         "templates": templates,
@@ -482,11 +305,6 @@ def get_templates():
 @app.route('/api/templates', methods=['POST'])
 def save_template():
     """Save a new template or update existing one"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     template_name = data.get('name')
     template_data = data.get('template')
@@ -507,11 +325,6 @@ def save_template():
 @app.route('/api/templates/<name>', methods=['DELETE'])
 def delete_template(name):
     """Delete a template"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     if name in templates:
         del templates[name]
         return jsonify({"status": "success", "message": f"Template '{name}' deleted"})
@@ -521,11 +334,6 @@ def delete_template(name):
 @app.route('/api/recent-files', methods=['GET'])
 def get_recent_files():
     """Get list of recent files"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     return jsonify({
         "status": "success",
         "recent_files": recent_files
@@ -535,11 +343,6 @@ def get_recent_files():
 @app.route('/api/analyze-file', methods=['POST'])
 def analyze_file():
     """Analyze a single Excel file and detect columns"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     file_path = data.get('file_path')
     template_name = data.get('template_name', None)
@@ -585,11 +388,6 @@ def analyze_file():
 @app.route('/api/process-files', methods=['POST'])
 def process_files():
     """Process multiple Excel files and merge them into a database"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     file_paths = data.get('file_paths', [])
     db_path = data.get('db_path')
@@ -1145,15 +943,9 @@ def insert_data_to_db(conn, cursor, mapped_data, rejected_rows):
     except Exception as e:
         print(f"插入数据错误: {str(e)}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
-        
 @app.route('/api/query-database', methods=['POST'])
 def query_database():
     """Query the database with filters and sorting"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     db_path = data.get('db_path')
     filters = data.get('filters', [])
@@ -1238,11 +1030,6 @@ def query_database():
 @app.route('/api/check-database', methods=['POST'])
 def check_database():
     """检查数据库结构和潜在问题"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     db_path = data.get('db_path')
 
@@ -1331,11 +1118,6 @@ def check_database():
 @app.route('/api/rejected-rows', methods=['POST'])
 def get_rejected_rows():
     """Get rejected rows that need manual verification"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     db_path = data.get('db_path')
     page = data.get('page', 1)
@@ -1436,11 +1218,6 @@ def get_rejected_rows():
 @app.route('/api/process-rejected-row', methods=['POST'])
 def process_rejected_row():
     """Process a manually fixed rejected row with simplified logic"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     print(f"接收到处理请求: {data}", file=sys.stderr, flush=True)
     
@@ -1629,15 +1406,9 @@ def process_rejected_row():
             pass
             
         return jsonify({"status": "error", "message": str(e)}), 500
-        
 @app.route('/api/export-excel', methods=['POST'])
 def export_excel():
     """Export query results to Excel"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     db_path = data.get('db_path')
     export_path = data.get('export_path')
@@ -1721,11 +1492,6 @@ def export_excel():
 @app.route('/api/database-stats', methods=['POST'])
 def get_database_stats():
     """Get statistics about the database"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     db_path = data.get('db_path')
 
@@ -1778,11 +1544,6 @@ def get_database_stats():
 @app.route('/api/update-synonyms', methods=['POST'])
 def update_synonyms():
     """Update synonyms for a template field"""
-    # 验证请求
-    validation = verify_request()
-    if validation:
-        return jsonify(validation[0]), validation[1]
-        
     data = request.json
     template_name = data.get('template_name')
     field_name = data.get('field_name')
@@ -1804,57 +1565,6 @@ def update_synonyms():
         "message": f"Synonyms updated for field '{field_name}' in template '{template_name}'"
     })
 
-# 新增端口检查和服务启动函数
-def find_available_port(start_port, max_attempts=10):
-    """查找可用端口"""
-    port = start_port
-    attempts = 0
-    
-    while attempts < max_attempts:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
-                return port
-        except socket.error:
-            attempts += 1
-            port += 1
-    
-    # 如果找不到可用端口，返回原始端口，将在稍后处理错误
-    return start_port
 
 if __name__ == '__main__':
-    # 检查是否有开发模式参数
-    if len(sys.argv) > 1 and sys.argv[1].lower() == 'dev':
-        print("启动开发模式，跳过验证...", file=sys.stderr)
-        # 在开发模式下直接启动
-        app.run(host='127.0.0.1', port=51234, debug=True)
-    else:
-        # 验证硬件和过期状态
-        hardware_valid = verify_hardware()
-        expired = check_expiration()
-        
-        if expired:
-            print("应用已过期，拒绝启动服务", file=sys.stderr)
-            print("提示：使用 'python backend.py dev' 启动开发模式", file=sys.stderr)
-            sys.exit(1)
-        
-        if not hardware_valid:
-            print("硬件验证失败，拒绝启动服务", file=sys.stderr)
-            print("提示：使用 'python backend.py dev' 启动开发模式", file=sys.stderr)
-            sys.exit(2)
-        
-        # 获取目标端口
-        target_port = int(os.environ.get('TARGET_PORT', '51234'))
-        port = find_available_port(target_port)
-        
-        if port != target_port:
-            print(f"警告: 端口 {target_port} 已被占用，使用备用端口 {port}", file=sys.stderr)
-        
-        # 打印启动日志
-        print(f"后端服务启动在端口: {port}", file=sys.stderr)
-        
-        try:
-            app.run(host='127.0.0.1', port=port, debug=False)
-        except Exception as e:
-            print(f"启动服务失败: {e}", file=sys.stderr)
-            sys.exit(3)
+    app.run(port=5000, debug=True)
