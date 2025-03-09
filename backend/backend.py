@@ -225,7 +225,7 @@ def convert_value(value, target_type):
     except Exception as e:
         # 转换失败时抛出异常，而不是返回原始值
         raise ValueError(f"无法将值 '{value}' 转换为 {target_type} 类型: {str(e)}")
-        
+
 # API Routes
 @app.route('/api/ping', methods=['GET'])
 def ping():
@@ -1151,7 +1151,7 @@ def get_rejected_rows():
 
 @app.route('/api/process-rejected-row', methods=['POST'])
 def process_rejected_row():
-    """Process a manually fixed rejected row"""
+    """Process a manually fixed rejected row with simplified logic"""
     data = request.json
     print(f"接收到处理请求: {data}", file=sys.stderr, flush=True)
     
@@ -1159,8 +1159,8 @@ def process_rejected_row():
     row_id = data.get('row_id')
     fixed_data = data.get('fixed_data', {})
     action = data.get('action', 'save')  # 'save' or 'delete'
-    template_name = data.get('template_name')  # 获取前端传入的模板名称
-
+    user_mappings = data.get('user_mappings', {})  # 从前端获取映射关系
+    
     if not db_path or row_id is None:
         return jsonify({"status": "error", "message": "Missing database path or row ID"}), 400
 
@@ -1171,67 +1171,79 @@ def process_rejected_row():
         if action == 'delete':
             # Delete the rejected row
             cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
-        elif action == 'save':
-            # Get the rejected row
-            cursor.execute("SELECT * FROM rejected_rows WHERE id = ?", (row_id,))
-            row = cursor.fetchone()
+            conn.commit()
+            conn.close()
+            return jsonify({"status": "success", "message": f"Rejected row {row_id} deleted successfully"})
+            
+        # 获取被拒绝的行信息
+        cursor.execute("SELECT * FROM rejected_rows WHERE id = ?", (row_id,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"status": "error", "message": f"Rejected row {row_id} not found"}), 404
+            
+        # 从SQLite结果创建字典
+        row_dict = {}
+        description = cursor.description or []
+        for i, col in enumerate(description):
+            row_dict[col[0]] = row[i]
+            
+        # 提取关键信息
+        source_file = fixed_data.get("source_file") or row_dict.get("source_file")
+        row_number = str(fixed_data.get("row_number") or row_dict.get("row_number") or "1")
+        column_name = row_dict.get('column_name')  # 原始列名
+        target_column = row_dict.get('target_column')  # 目标列名
+        current_fixing_field = target_column if target_column else column_name  # 当前修复的字段
+        
+        print(f"处理文件: {source_file}, 行号: {row_number}, 修复字段: {current_fixing_field}", 
+              file=sys.stderr, flush=True)
+        print(f"用户映射关系: {user_mappings}", file=sys.stderr, flush=True)
 
-            if not row:
-                return jsonify({"status": "error", "message": f"Rejected row {row_id} not found"}), 404
-
-            # 从SQLite结果创建字典
-            row_dict = {}
-            description = cursor.description or []
-            for i, col in enumerate(description):
-                row_dict[col[0]] = row[i]
+        # 查找是否存在现有行
+        cursor.execute(
+            "SELECT * FROM transactions WHERE source_file = ? AND row_number = ?", 
+            (source_file, row_number)
+        )
+        existing_row = cursor.fetchone()
+        
+        if existing_row:
+            # 如果行已存在，仅更新用户修改的字段
+            print(f"找到现有行，仅更新修改的字段", file=sys.stderr, flush=True)
             
-            # 获取行的基本信息
-            source_file = fixed_data.get("source_file") or row_dict.get("source_file")
-            
-            # 获取和验证行号
-            row_number = fixed_data.get("row_number") or row_dict.get("row_number")
-            
-            # 验证行号，确保不是日期或其他非法值
-            if row_number and isinstance(row_number, str):
-                # 检查是否看起来像日期 (例如 "2001/1/1" 或 "2001-1-1")
-                date_pattern = re.compile(r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[-/]\d{4}$')
-                if date_pattern.match(str(row_number)):
-                    print(f"警告: row_number '{row_number}'看起来像日期，尝试找出正确的行号", file=sys.stderr, flush=True)
+            # 更新用户修改的字段
+            for field, value in fixed_data.items():
+                # 跳过标识字段
+                if field in ["source_file", "row_number"]:
+                    continue
                     
-                    # 尝试从原始数据获取实际行号
-                    try:
-                        # 解析原始数据
-                        raw_data_str = row_dict.get('raw_data')
-                        if raw_data_str:
-                            raw_data = json.loads(raw_data_str)
+                # 只处理当前修复的字段和ID字段
+                if field == current_fixing_field or field == "ID":
+                    # 处理空值和NaN
+                    if value is None or value == '' or value == 'NaN':
+                        cursor.execute(
+                            f"UPDATE transactions SET {field} = NULL WHERE source_file = ? AND row_number = ?",
+                            (source_file, row_number)
+                        )
+                        print(f"将字段 {field} 更新为NULL", file=sys.stderr, flush=True)
+                    else:
+                        # 特殊处理ID字段，确保以字符串形式存储
+                        if field == "ID":
+                            value = str(value)
                             
-                            # 查找可能的行号字段
-                            for key in ['row', 'rownum', 'row_number', '行号', '行']:
-                                if key in raw_data and isinstance(raw_data[key], (int, str)):
-                                    row_number = str(raw_data[key])
-                                    print(f"从原始数据找到行号: {row_number}", file=sys.stderr, flush=True)
-                                    break
-                    except Exception as e:
-                        print(f"尝试从原始数据获取行号失败: {str(e)}", file=sys.stderr, flush=True)
-                    
-                    # 如果仍然无法获取有效行号，使用默认值
-                    if date_pattern.match(str(row_number)):
-                        print(f"无法确定正确的行号，使用默认值'1'", file=sys.stderr, flush=True)
-                        row_number = "1"  # 默认行号
+                        cursor.execute(
+                            f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
+                            (value, source_file, row_number)
+                        )
+                        print(f"更新字段: {field} = {value}", file=sys.stderr, flush=True)
+        else:
+            # 如果行不存在，需要根据映射关系从原始数据创建新行
+            print(f"行不存在，创建新行", file=sys.stderr, flush=True)
             
-            # 确保行号是字符串
-            row_number = str(row_number) if row_number is not None else "1"
-            
-            column_name = row_dict.get('column_name')  # 用户当前修复的列名
-            target_column = row_dict.get('target_column')  # 目标列名
-            
-            # 获取原始错误数据
-            raw_data_str = row_dict.get('raw_data')
+            # 解析原始数据
             original_data = {}
-            
             try:
+                raw_data_str = row_dict.get('raw_data')
                 if raw_data_str:
-                    # 预处理可能导致问题的值
+                    # 处理可能的JSON格式问题
                     if isinstance(raw_data_str, str):
                         raw_data_str = (raw_data_str
                             .replace(': NaN,', ': null,')
@@ -1241,225 +1253,84 @@ def process_rejected_row():
                             .replace(': Infinity}', ': "Infinity"}')
                             .replace(': -Infinity}', ': "-Infinity"}'))
                     
-                    # 解析原始数据
                     original_data = json.loads(raw_data_str)
                     print(f"成功解析原始数据: {len(original_data)} 个字段", file=sys.stderr, flush=True)
             except Exception as e:
                 print(f"解析原始数据失败: {str(e)}", file=sys.stderr, flush=True)
-            
-            # 获取适用的模板
-            current_template = {}
-            if template_name and template_name in templates:
-                current_template = templates[template_name]
-                print(f"使用前端指定模板: {template_name}", file=sys.stderr, flush=True)
-            elif templates:
-                first_template_name = next(iter(templates))
-                current_template = templates[first_template_name]
-                print(f"使用第一个可用模板: {first_template_name}", file=sys.stderr, flush=True)
-            
-            # 构建字段映射
-            field_mapping = {}
-            for orig_col in original_data:
-                if not orig_col:
-                    continue
-                    
-                found_target = None
-                # 检查是否有直接匹配
-                for template_field, details in current_template.items():
-                    if orig_col == template_field or orig_col in details.get('synonyms', []):
-                        found_target = template_field
-                        break
                 
-                # 如果没找到直接匹配，使用模糊匹配
-                if not found_target:
-                    best_match = None
-                    best_score = 0
-                    
-                    for template_field, details in current_template.items():
-                        for name in [template_field] + details.get('synonyms', []):
-                            score = difflib.SequenceMatcher(None, orig_col, name).ratio()
-                            if score > best_score and score > 0.6:
-                                best_score = score
-                                best_match = template_field
-                    
-                    if best_match:
-                        found_target = best_match
+            # 创建新行数据
+            new_row = {
+                "source_file": source_file,
+                "row_number": row_number
+            }
+            
+            # 应用用户映射关系，从原始数据填充字段
+            template_name = data.get('template_name')
+            current_template = templates.get(template_name, templates.get(next(iter(templates))))
+            
+            for orig_col, target_col in user_mappings.items():
+                if not target_col or orig_col not in original_data:
+                    continue  # 跳过未映射的列或原始数据中不存在的列
                 
-                if found_target:
-                    field_mapping[orig_col] = found_target
-                    print(f"字段映射: {orig_col} -> {found_target}", file=sys.stderr, flush=True)
-            
-            # 确定ID值 - 通用方法，查找映射到"ID"的原始字段
-            id_value = None
-            id_field = None
-            
-            # 方法1: 查找映射到ID的原始字段
-            for orig_col, target_col in field_mapping.items():
-                if target_col == "ID" and orig_col in original_data and original_data[orig_col] is not None:
-                    id_value = str(original_data[orig_col])
-                    id_field = orig_col
-                    print(f"从映射字段 {orig_col} 找到ID: {id_value}", file=sys.stderr, flush=True)
-                    break
-            
-            # 方法2: 检查用户提供的ID
-            if not id_value and 'ID' in fixed_data and fixed_data['ID'] and fixed_data['ID'] != 'NaN':
-                id_value = str(fixed_data['ID'])
-                print(f"使用用户提供的ID值: {id_value}", file=sys.stderr, flush=True)
-            
-            # 方法3: 如果还未找到，尝试通用ID字段名
-            if not id_value:
-                id_candidates = ['ID', 'id', '序号', '编号', '事件编号', 'event_id', 'record_id']
-                for field in id_candidates:
-                    if field in original_data and original_data[field] is not None:
-                        id_value = str(original_data[field])
-                        id_field = field
-                        print(f"从候选字段 {field} 找到ID: {id_value}", file=sys.stderr, flush=True)
-                        break
-            
-            # 查找已存在的行
-            cursor.execute(
-                "SELECT * FROM transactions WHERE source_file = ? AND row_number = ?", 
-                (source_file, row_number)
-            )
-            existing_row = cursor.fetchone()
-            
-            if existing_row:
-                # 如果已存在行，只更新明确修改的字段
-                print(f"找到已存在的行，执行更新操作", file=sys.stderr, flush=True)
-                for field, value in fixed_data.items():
-                    if field in ["source_file", "row_number"]:
-                        continue  # 跳过这些字段
+                try:
+                    # 获取字段类型
+                    field_type = "text"  # 默认类型
+                    if target_col in current_template:
+                        field_type = current_template[target_col]["type"]
                     
-                    # 特殊处理ID字段
-                    if field == "ID":
-                        if not value or value == 'NaN':
-                            if id_value:
-                                # 如果有更好的ID，使用它
-                                value = id_value
-                            else:
-                                # 没有ID就跳过
-                                continue
-                        value = str(value)
-                    
-                    # 处理空值 - 当字段不是要修复的列，且值为空或NaN时跳过
-                    if (value is None or value == '' or value == 'NaN') and field != target_column and field != column_name:
-                        print(f"跳过字段 {field} 的空值", file=sys.stderr, flush=True)
-                        continue
-                        
-                    # 如果值为空且是当前修复的列，使用NULL更新
-                    if value is None or value == '' or value == 'NaN':
-                        cursor.execute(
-                            f"UPDATE transactions SET {field} = NULL WHERE source_file = ? AND row_number = ?",
-                            (source_file, row_number)
-                        )
-                        print(f"将字段 {field} 更新为NULL", file=sys.stderr, flush=True)
-                    else:
-                        # 更新非空值
-                        cursor.execute(
-                            f"UPDATE transactions SET {field} = ? WHERE source_file = ? AND row_number = ?",
-                            (value, source_file, row_number)
-                        )
-                        print(f"更新字段: {field} = {value}", file=sys.stderr, flush=True)
+                    # 转换值
+                    value = original_data[orig_col]
+                    if value is not None:
+                        converted_value = convert_value(value, field_type)
+                        if converted_value is not None:
+                            new_row[target_col] = converted_value
+                            print(f"从原始数据映射: {orig_col} -> {target_col} = {converted_value}", file=sys.stderr, flush=True)
+                except Exception as e:
+                    print(f"转换字段 {orig_col} 值失败: {str(e)}", file=sys.stderr, flush=True)
+            
+            # 应用用户修改的字段值，这些优先级更高
+            for field, value in fixed_data.items():
+                if field in ["source_file", "row_number"]:
+                    continue  # 已经处理过
+                
+                if value is not None and value != 'NaN' and value != '':
+                    new_row[field] = value
+                    print(f"使用用户提供的值: {field} = {value}", file=sys.stderr, flush=True)
+                elif field == current_fixing_field:
+                    # 如果是当前修复的字段，即使为空也设置为NULL
+                    new_row[field] = None
+                    print(f"设置字段为NULL: {field}", file=sys.stderr, flush=True)
+            
+            # 插入新行
+            if len(new_row) > 2:  # 确保至少有一个非标识字段
+                columns = list(new_row.keys())
+                values = list(new_row.values())
+                placeholders = ", ".join(["?" for _ in columns])
+                
+                try:
+                    cursor.execute(
+                        f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
+                        values
+                    )
+                    print(f"成功插入新行: {columns} = {values}", file=sys.stderr, flush=True)
+                except sqlite3.Error as e:
+                    print(f"插入新行失败: {str(e)}", file=sys.stderr, flush=True)
+                    raise e
             else:
-                # 如果不存在，需要创建新行
-                print(f"未找到现有行，创建新行", file=sys.stderr, flush=True)
-                
-                # 准备初始列和值
-                columns = ["source_file", "row_number"]
-                values = [source_file, row_number]
-                
-                # 添加ID (如果有)
-                if id_value:
-                    columns.append("ID")
-                    values.append(id_value)
-                    print(f"添加ID字段: {id_value}", file=sys.stderr, flush=True)
-                
-                # 从原始数据添加所有字段
-                if original_data:
-                    print(f"从原始数据添加字段", file=sys.stderr, flush=True)
-                    
-                    # 使用映射添加字段值，跳过已映射为ID的字段
-                    for orig_col, target_col in field_mapping.items():
-                        if target_col == "ID" or orig_col == id_field:
-                            continue  # 已处理ID字段
-                            
-                        if target_col not in columns:  # 避免重复
-                            value = original_data[orig_col]
-                            
-                            # 跳过None和空字符串
-                            if value is None or (isinstance(value, str) and not value.strip()):
-                                continue
-                                
-                            # 尝试转换值
-                            try:
-                                field_type = current_template[target_col]['type']
-                                converted_value = convert_value(value, field_type)
-                                
-                                # 只添加非None值
-                                if converted_value is not None:
-                                    columns.append(target_col)
-                                    values.append(converted_value)
-                                    print(f"添加原始字段: {orig_col} -> {target_col} = {converted_value}", file=sys.stderr, flush=True)
-                            except Exception as e:
-                                print(f"转换字段 {orig_col} 值失败: {str(e)}", file=sys.stderr, flush=True)
-                
-                # 添加或更新用户修改的字段
-                for field, value in fixed_data.items():
-                    if field in ["source_file", "row_number"]:
-                        continue  # 已添加
-                    
-                    # 特殊处理ID字段
-                    if field == "ID" and (not value or value == 'NaN'):
-                        if id_value and 'ID' not in columns:
-                            columns.append("ID")
-                            values.append(id_value)
-                        continue
-                        
-                    # 对于非空值更新或添加
-                    if value is not None and value != 'NaN' and value != '':
-                        if field in columns:
-                            idx = columns.index(field)
-                            values[idx] = value
-                            print(f"更新用户修改字段: {field} = {value}", file=sys.stderr, flush=True)
-                        else:
-                            columns.append(field)
-                            values.append(value)
-                            print(f"添加用户修改字段: {field} = {value}", file=sys.stderr, flush=True)
-                    # 如果是当前修复的字段且值为空，添加NULL
-                    elif field == target_column or field == column_name:
-                        if field in columns:
-                            idx = columns.index(field)
-                            values[idx] = None
-                        else:
-                            columns.append(field)
-                            values.append(None)
-                        print(f"添加空值字段: {field} = NULL", file=sys.stderr, flush=True)
-                
-                # 插入完整的行数据
-                if columns:
-                    placeholders = ", ".join(["?" for _ in columns])
-                    try:
-                        cursor.execute(
-                            f"INSERT INTO transactions ({', '.join(columns)}) VALUES ({placeholders})",
-                            values
-                        )
-                        print(f"成功插入完整行数据: 字段={columns}, 值={values}", file=sys.stderr, flush=True)
-                    except sqlite3.Error as e:
-                        print(f"插入完整行数据失败: {str(e)}", file=sys.stderr, flush=True)
-                        raise e
-
-            # 删除已处理的拒绝行
-            cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
-
+                print("警告: 没有足够的数据创建新行", file=sys.stderr, flush=True)
+        
+        # 删除已处理的拒绝行
+        cursor.execute("DELETE FROM rejected_rows WHERE id = ?", (row_id,))
+        
         conn.commit()
         conn.close()
-
+        
         return jsonify({
             "status": "success",
             "message": f"Rejected row {row_id} processed successfully"
         })
     except Exception as e:
-        print(f"处理拒绝行失败详细信息: {str(e)}", file=sys.stderr, flush=True)
+        print(f"处理拒绝行失败: {str(e)}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
         
         try:
@@ -1469,7 +1340,6 @@ def process_rejected_row():
             pass
             
         return jsonify({"status": "error", "message": str(e)}), 500
-
 @app.route('/api/export-excel', methods=['POST'])
 def export_excel():
     """Export query results to Excel"""

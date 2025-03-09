@@ -2190,7 +2190,13 @@ async function saveRejectedRow() {
             }
         });
         
+        // 获取用户设置的列映射关系
+        // 找到当前文件的映射配置
+        const fileName = currentRejectedRow.source_file;
+        const userMappings = columnMappings[fileName] || {};
+                
         console.log('发送更新数据:', fixedData);
+        console.log('发送用户设置的映射关系:', userMappings);
         
         // 发送请求保存修改后的行
         const response = await fetch(`${API_BASE_URL}/process-rejected-row`, {
@@ -2201,7 +2207,8 @@ async function saveRejectedRow() {
                 row_id: currentRejectedRow.id,
                 fixed_data: fixedData,
                 action: 'save',
-                template_name: currentTemplate
+                template_name: currentTemplate,
+                user_mappings: userMappings  // 添加用户设置的映射关系
             })
         });
 
@@ -2478,7 +2485,6 @@ async function loadData(page = 1, filters = [], sortBy = null, sortDirection = '
     }
 }
 
-// 修改 renderDataTable 函数，防止错误格式化行号
 function renderDataTable(data, totalCount, currentPage, pageSize) {
     if (!data || data.length === 0) {
         elements.dataTableHead.innerHTML = '<tr><th>无数据</th></tr>';
@@ -2487,35 +2493,45 @@ function renderDataTable(data, totalCount, currentPage, pageSize) {
         return;
     }
 
-    // 获取列类型信息
+    // 获取当前模板的字段类型定义
+    const templateFieldTypes = {};
+    if (currentTemplate && templates[currentTemplate]) {
+        const template = templates[currentTemplate];
+        for (const field in template) {
+            templateFieldTypes[field] = template[field].type;
+        }
+    }
+    
+    console.log("模板字段类型:", templateFieldTypes);
+
+    // 获取列类型信息，优先使用模板定义的类型
     const columnTypes = {};
     for (const column in data[0]) {
-        // 特殊处理row_number，强制设为text类型
-        if (column === 'row_number') {
+        // 特殊字段始终作为文本处理
+        if (['row_number', 'ID', 'source_file'].includes(column)) {
             columnTypes[column] = 'text';
             continue;
         }
         
-        // 尝试根据值判断列类型
+        // 优先使用模板中定义的类型
+        if (templateFieldTypes[column]) {
+            columnTypes[column] = templateFieldTypes[column];
+            continue;
+        }
+        
+        // 如果模板中没有定义，再根据值类型推断
         let value = data[0][column];
         if (typeof value === 'number') {
             columnTypes[column] = 'number';
         } else if (value instanceof Date) {
             columnTypes[column] = 'date';
-        } else if (typeof value === 'string') {
-            // 检查字符串是否应该解析为日期
-            // 但对于row_number、ID等特定字段，始终作为文本处理
-            if (['row_number', 'ID', 'source_file'].includes(column)) {
-                columnTypes[column] = 'text';
-            } else if (!isNaN(Date.parse(value))) {
-                columnTypes[column] = 'date';
-            } else {
-                columnTypes[column] = 'text';
-            }
         } else {
+            // 默认作为文本处理，不再尝试将字符串解析为日期
             columnTypes[column] = 'text';
         }
     }
+    
+    console.log("最终使用的列类型:", columnTypes);
 
     // 渲染表头
     elements.dataTableHead.innerHTML = '';
@@ -2567,16 +2583,23 @@ function renderDataTable(data, totalCount, currentPage, pageSize) {
             
             // 根据列类型添加适当的类和格式化
             if (column === 'row_number' || column === 'ID' || column === 'source_file') {
-                // 这些特殊字段始终作为文本显示，防止自动转换为日期
+                // 这些特殊字段始终作为文本显示
                 td.className = 'text-cell';
                 td.textContent = row[column] !== null ? String(row[column]) : '';
-            } else if (columnTypes[column] === 'number') {
+            } else if (columnTypes[column] === 'number' || columnTypes[column] === 'float' || columnTypes[column] === 'int') {
+                // 数值类型
                 td.className = 'number-cell';
                 td.textContent = row[column] !== null ? formatNumber(row[column]) : '';
             } else if (columnTypes[column] === 'date') {
+                // 日期类型
                 td.className = 'date-cell';
                 td.textContent = row[column] !== null ? formatDate(row[column]) : '';
+            } else if (columnTypes[column] === 'time') {
+                // 时间类型
+                td.className = 'time-cell';
+                td.textContent = row[column] !== null ? row[column] : '';
             } else {
+                // 默认作为文本处理
                 td.className = 'text-cell';
                 td.textContent = row[column] !== null ? row[column] : '';
             }
